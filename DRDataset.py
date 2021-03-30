@@ -24,13 +24,14 @@ def onehot(size, target):
     return vec
 
 class DRDataset(Dataset):
-    def __init__(self, image_ids, labels=None, dim=256, crop = False, transforms=None):
+    def __init__(self, image_ids, labels=None, dim=256, target_type='regression', crop = False, transforms=None):
         super().__init__()
         self.image_ids = image_ids
         self.labels = labels
         self.crop = crop
         self.transforms = transforms
         self.dim = dim
+        self.target_type=target_type
         
     def __getitem__(self, idx):
         image_id = self.image_ids[idx]
@@ -54,6 +55,15 @@ class DRDataset(Dataset):
 
     def __len__(self):
         return len(self.image_ids)
+    
+    def target_processor(self, target):
+        if self.target_type == 'regression': return target
+        elif self.target_type == 'classification': return one_hot(5, target)
+        elif self.target_type == 'ordinal_regression':
+            tmp = np.zeros(target.shape[0], 5)
+            for i in range(target+1):
+                tmp[:, i] = 1
+            return tmp
 
     def get_labels(self):
         return list(self.labels)
