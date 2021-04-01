@@ -48,7 +48,7 @@ class DRDataset(Dataset):
             image = image.reshape(self.dim, self.dim, 3).transpose(2, 0, 1)
         if self.labels is not None:
             target = self.labels[idx]
-            return image_id, image, target
+            return image_id, image, self.target_processor(target)
             # return image_id, image, onehot(5, target)
         else:
             return image_id, image
@@ -60,7 +60,7 @@ class DRDataset(Dataset):
         if self.target_type == 'regression': return target
         elif self.target_type == 'classification': return one_hot(5, target)
         elif self.target_type == 'ordinal_regression':
-            tmp = np.zeros(target.shape[0], 5)
+            tmp = np.zeros((1, 5))
             for i in range(target+1):
                 tmp[:, i] = 1
             return tmp

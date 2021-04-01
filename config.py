@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1, 2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 from configparser import ConfigParser as cfg
 import cv2
 import pandas as pd
@@ -39,7 +39,9 @@ learning_rate = float(params['learning_rate'])
 patience = int(params['patience'])
 accum_step = int(params['accum_step'])
 opts = ['normal', 'mixup', 'cutmix']
+num_class = int(params['num_class'])
 choice_weights = [1.00, 0.00, 0.00]
+target_type = params['target_type']
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mixed_precision = bool(int(params['mixed_precision']))
 use_meta = bool(int(params['use_meta']))

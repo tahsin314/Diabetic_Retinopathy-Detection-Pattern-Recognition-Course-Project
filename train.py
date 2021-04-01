@@ -1,4 +1,6 @@
 import os
+
+from matplotlib.pyplot import axis
 from config import *
 import shutil
 import sys
@@ -80,15 +82,15 @@ train_df = df[(df['fold']!=fold) & (df['fold']!=n_fold-1)]
 valid_df = df[df['fold']==fold]
 test_df = df[df['fold']==n_fold-1]
 # print(len(train_df), len(valid_df), len(test_df))
-# model = Resnest(pretrained_model, use_meta=use_meta).to(device)
+model = Resnest(pretrained_model, num_class=5).to(device)
 # model = Mixnet(pretrained_model, use_meta=use_meta, out_neurons=500, meta_neurons=250).to(device)
-model = EffNet(pretrained_model=pretrained_model, freeze_upto=freeze_upto).to(device)
+# model = EffNet(pretrained_model=pretrained_model, num_class=5, freeze_upto=freeze_upto).to(device)
 # model = Hybrid().to(device)
 model = torch.nn.DataParallel(model)
 wandb.watch(model)
 # print(model.module.backbone.conv_head)
 # model.to(f'cuda:{model.device_ids[0]}')
-train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, crop=True, dim=sz, transforms=train_aug)
+train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, crop=True, dim=sz, transforms=train_aug)
 
 
 if balanced_sampler:
@@ -97,10 +99,10 @@ if balanced_sampler:
 else:
   train_loader = DataLoader(train_ds,batch_size=batch_size, shuffle=True, drop_last=True, num_workers=4)
 
-valid_ds = DRDataset(valid_df.image_id.values, valid_df.diagnosis.values, crop=True, dim=sz, transforms=val_aug)
+valid_ds = DRDataset(valid_df.image_id.values, valid_df.diagnosis.values, target_type=target_type, crop=True, dim=sz, transforms=val_aug)
 valid_loader = DataLoader(valid_ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
-test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz, crop=True, transforms=val_aug)
+test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz, target_type=target_type, crop=True, transforms=val_aug)
 test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
 def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.1], rate=1, train=True, mode='train'):
@@ -123,7 +125,7 @@ def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.
   for idx, (_, inputs,labels) in enumerate(dataloader):
     with torch.set_grad_enabled(train):
       inputs = inputs.to(device)
-      labels = labels.view(-1, 1).float().to(device)
+      labels = labels.view(-1, num_class).float().to(device)
       epoch_samples += len(inputs)
       if not train:
         choice_weights = [1.0, 0, 0]
@@ -165,9 +167,17 @@ def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.
               # cyclic_scheduler.step()    
       elapsed = int(time.time() - t1)
       eta = int(elapsed / (idx+1) * (len(dataloader)-(idx+1)))
-      pred.extend(torch.round(outputs).view(-1).detach().cpu().numpy())
-      lab.extend(labels.view(-1).cpu().numpy())
-      batch_kappa.append(cohen_kappa_score(torch.round(outputs).view(-1).detach().cpu().numpy(), labels.view(-1).cpu().numpy(), weights='quadratic'))
+      if target_type == 'regression':
+        pr = torch.round(outputs).view(-1).detach().cpu().numpy()
+        la = labels.view(-1).cpu().numpy()
+
+      if target_type == 'ordinal_regression':
+        pr = torch.round(torch.sum((torch.sigmoid(outputs)>0.5).float(), axis=1)-1).view(-1).detach().cpu().numpy()
+        la = torch.round(torch.sum(labels, axis=1)).view(-1).detach().cpu().numpy()
+
+      pred.extend(pr)
+      lab.extend(la)
+      batch_kappa.append(cohen_kappa_score(pred, lab, weights='quadratic'))
       # pred.extend(torch.argmax(outputs, dim=1).detach().cpu().numpy())
       # lab.extend(torch.argmax(labels, dim=1).cpu().numpy())
       if train:
@@ -244,8 +254,8 @@ cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learnin
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/250, learning_rate/10, learning_rate/10, learning_rate/10], max_lr=[learning_rate/25, learning_rate, learning_rate, learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
 
 # nn.BCEWithLogitsLoss(), ArcFaceLoss(), FocalLoss(logits=True).to(device), LabelSmoothing().to(device) 
-# criterion = criterion_margin_focal_binary_cross_entropy
-criterion = nn.MSELoss(reduction='sum')
+criterion = criterion_margin_focal_binary_cross_entropy
+# criterion = nn.MSELoss(reduction='sum')
 # criterion = ArcFaceLoss().to(device)
 # criterion = HybridLoss(alpha=2, beta=1).to(device)
 
