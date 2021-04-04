@@ -24,11 +24,12 @@ def onehot(size, target):
     return vec
 
 class DRDataset(Dataset):
-    def __init__(self, image_ids, labels=None, dim=256, target_type='regression', crop = False, transforms=None):
+    def __init__(self, image_ids, labels=None, dim=256, target_type='regression', crop = False, ben_color=False, transforms=None):
         super().__init__()
         self.image_ids = image_ids
         self.labels = labels
         self.crop = crop
+        self.ben_color = ben_color
         self.transforms = transforms
         self.dim = dim
         self.target_type=target_type
@@ -38,7 +39,9 @@ class DRDataset(Dataset):
         image = cv2.imread(image_id, cv2.IMREAD_COLOR)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         if self.crop:
-            image = crop_image_from_gray(image)
+            image = crop_image_ilovescience(image)
+        if self.ben_color:
+            image = load_ben_color(image, self.dim)
         image = cv2.resize(image, (self.dim, self.dim))
         
         if self.transforms is not None:

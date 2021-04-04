@@ -56,7 +56,7 @@ def visualize_cam(mask, img, alpha=0.8, beta=0.15):
 
 
 def grad_cam_gen(model, img, mixed_precision = False, device = 'cuda'):     
-    configs = [dict(model_type='resnet', arch=model, layer_name='blocks_6_0_conv_pwl')]
+    configs = [dict(model_type='resnet', arch=model, layer_name='layer4')]
     for config in configs:
         config['arch'].to(device).eval()
 
@@ -72,7 +72,7 @@ def grad_cam_gen(model, img, mixed_precision = False, device = 'cuda'):
         result_pp = np.transpose(result_pp, (1,2,0))
         return result_pp/np.max(result_pp)
 
-def plot_heatmap(model, path, valid_df, val_aug, device='cuda', sz=384):
+def plot_heatmap(model, path, valid_df, val_aug, crop=True, ben_color=False, device='cuda', sz=384):
     
     fig = plt.figure(figsize=(70, 56))
     valid_df['path'] = valid_df['image_id'].map(lambda x: x)
@@ -82,6 +82,10 @@ def plot_heatmap(model, path, valid_df, val_aug, device='cuda', sz=384):
             path=f"{row['path']}"
             image = cv2.imread(path, cv2.IMREAD_COLOR)
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            if crop:
+                image = crop_image_ilovescience(image)
+            if ben_color:
+                image = load_ben_color(image, sz)
             image = cv2.resize(image, (sz, sz))
             aug = val_aug(image=image)
             image = aug['image'].reshape(sz, sz, 3).transpose(2, 0, 1)
@@ -123,6 +127,37 @@ def crop_image_from_gray(img,tol=7):
             img = np.stack([img1,img2,img3],axis=-1)
     #         print(img.shape)
         return img
+
+
+def crop_image_ilovescience(image):
+    output = image.copy()
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    ret,gray = cv2.threshold(gray,10,255,cv2.THRESH_BINARY)
+    contours,hierarchy = cv2.findContours(gray,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        print('no contours!')
+        flag = 0
+        return image, flag
+    cnt = max(contours, key=cv2.contourArea)
+    ((x, y), r) = cv2.minEnclosingCircle(cnt)
+    x = int(x); y = int(y); r = int(r)
+    flag = 1
+    #print(x,y,r)
+    if r > 100:
+        return output[0 + (y-r)*int(r<y):-1 + (y+r+1)*int(r<y),0 + (x-r)*int(r<x):-1 + (x+r+1)*int(r<x)]
+    else:
+        print('none!')
+        flag = 0
+        return image,flag
+
+def load_ben_color(image, IMG_SIZE):
+    sigmaX=10
+    image = crop_image_ilovescience(image)
+    image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
+    image=cv2.addWeighted ( image,4, cv2.GaussianBlur( image , (0,0) , sigmaX) ,-4 ,128)
+        
+    return image
+
 
 def Messidor_Process(dirname):
     bases = [11, 12, 14, 21, 22, 23, 24, 31, 32, 33]

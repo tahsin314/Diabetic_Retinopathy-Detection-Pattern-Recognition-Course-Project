@@ -39,6 +39,7 @@ from model.resnest import Resnest, Mixnet, Attn_Resnest
 from model.hybrid import Hybrid
 sys.path.insert(0, 'pytorch_lr_finder')
 from torch_lr_finder import LRFinder
+from over9000.over9000 import Over9000, Ralamb
 import wandb
 
 seed_everything(SEED)
@@ -82,15 +83,17 @@ train_df = df[(df['fold']!=fold) & (df['fold']!=n_fold-1)]
 valid_df = df[df['fold']==fold]
 test_df = df[df['fold']==n_fold-1]
 # print(len(train_df), len(valid_df), len(test_df))
-model = Resnest(pretrained_model, num_class=5).to(device)
+if 'eff' in model_name:
+  model = EffNet(pretrained_model=pretrained_model, num_class=num_class, freeze_upto=freeze_upto).to(device)
+else:
+  model = Resnest(pretrained_model, num_class=num_class).to(device)
 # model = Mixnet(pretrained_model, use_meta=use_meta, out_neurons=500, meta_neurons=250).to(device)
-# model = EffNet(pretrained_model=pretrained_model, num_class=5, freeze_upto=freeze_upto).to(device)
 # model = Hybrid().to(device)
 model = torch.nn.DataParallel(model)
 wandb.watch(model)
 # print(model.module.backbone.conv_head)
 # model.to(f'cuda:{model.device_ids[0]}')
-train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, crop=True, dim=sz, transforms=train_aug)
+train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=train_aug)
 
 
 if balanced_sampler:
@@ -99,10 +102,10 @@ if balanced_sampler:
 else:
   train_loader = DataLoader(train_ds,batch_size=batch_size, shuffle=True, drop_last=True, num_workers=4)
 
-valid_ds = DRDataset(valid_df.image_id.values, valid_df.diagnosis.values, target_type=target_type, crop=True, dim=sz, transforms=val_aug)
+valid_ds = DRDataset(valid_df.image_id.values, valid_df.diagnosis.values, target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=val_aug)
 valid_loader = DataLoader(valid_ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
-test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz, target_type=target_type, crop=True, transforms=val_aug)
+test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz, target_type=target_type, crop=crop, ben_color=ben_color, transforms=val_aug)
 test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
 def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.1], rate=1, train=True, mode='train'):
@@ -158,7 +161,7 @@ def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.
               scaler.step(optimizer) 
               scaler.update() 
               optimizer.zero_grad()
-              cyclic_scheduler.step()
+              # cyclic_scheduler.step()
           else:
             loss.backward()
             if (idx+1) % accum_step == 0:
@@ -173,7 +176,7 @@ def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.
 
       if target_type == 'ordinal_regression':
         pr = torch.round(torch.sum((torch.sigmoid(outputs)>0.5).float(), axis=1)-1).view(-1).detach().cpu().numpy()
-        la = torch.round(torch.sum(labels, axis=1)).view(-1).detach().cpu().numpy()
+        la = torch.round(torch.sum(labels, axis=1)-1).view(-1).detach().cpu().numpy()
 
       pred.extend(pr)
       lab.extend(la)
@@ -206,11 +209,12 @@ def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.
       wandb.log({"Epoch":epoch,  f"{mode} Loss": running_loss/epoch_samples, f"{mode} Kappa Score":kappa, f"{mode} Mean Kappa Score":kappa_mean})
       plot_confusion_matrix(lab, pred, [i for i in range(5)])
       try:
-        plot_heatmap(model, image_path, valid_df, val_aug, sz=sz)
+        plot_heatmap(model, image_path, valid_df, val_aug, crop=crop, ben_color=ben_color, sz=sz)
         cam = cv2.imread('./heatmap.png', cv2.IMREAD_COLOR)
         cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
         wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})
-      except:
+      except Exception as e:
+        print(f"\033[91mException: {e}\033[91m")
         pass
 
       conf = cv2.imread('./conf.png', cv2.IMREAD_COLOR)
@@ -247,21 +251,27 @@ plist = [
         # {'params': model.module.output.parameters(), 'lr': learning_rate},
         # {'params': model.module.output1.parameters(),  'lr': learning_rate},
     ]
-optimizer = optim.Adam(plist, lr=learning_rate)
-lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=patience, verbose=True, threshold=1e-4, threshold_mode='rel', cooldown=0, min_lr=1e-7, eps=1e-08)
-# cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, 3*learning_rate], epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.3, anneal_strategy='cos', cycle_momentum=True, base_momentum=0.85, max_momentum=0.95, div_factor=20.0, final_div_factor=100.0, last_epoch=-1)
-cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/20,  learning_rate], max_lr=[learning_rate/10, 2*learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
-# cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/250, learning_rate/10, learning_rate/10, learning_rate/10], max_lr=[learning_rate/25, learning_rate, learning_rate, learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
-
+# optimizer = optim.AdamW(plist, lr=learning_rate)
+optimizer = Ralamb(plist, lr=learning_rate)
 # nn.BCEWithLogitsLoss(), ArcFaceLoss(), FocalLoss(logits=True).to(device), LabelSmoothing().to(device) 
-criterion = criterion_margin_focal_binary_cross_entropy
-# criterion = nn.MSELoss(reduction='sum')
+# criterion = nn.BCEWithLogitsLoss(reduction='sum')
+# criterion = criterion_margin_focal_binary_cross_entropy
+criterion = nn.MSELoss(reduction='sum')
 # criterion = ArcFaceLoss().to(device)
 # criterion = HybridLoss(alpha=2, beta=1).to(device)
-
 # lr_finder = LRFinder(model, optimizer, criterion, device="cuda")
-# lr_finder.range_test(train_loader, end_lr=10, num_iter=100, step_mode="exp")
-# lr_finder.plot()
+# lr_finder.range_test(train_loader=train_loader, accumulation_steps=accum_step, end_lr=10, num_iter=300, step_mode="exp")
+# _, suggested_lr = lr_finder.plot(suggest_lr=True)
+# lr_finder.reset()
+# print(f"Suggested LR: {suggested_lr}")
+lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=patience, verbose=True, threshold=1e-4, threshold_mode='rel', cooldown=0, min_lr=1e-7, eps=1e-08)
+cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate], epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
+# cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/20,  learning_rate], max_lr=[learning_rate/10, 2*learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
+# cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/250, learning_rate/10, learning_rate/10, learning_rate/10], max_lr=[learning_rate/25, learning_rate, learning_rate, learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
+
+
+
+
 
 
 def main():
@@ -278,7 +288,7 @@ def main():
     scaler.load_state_dict(tmp['scaler'])
     prev_epoch_num = tmp['epoch']
     best_valid_loss = tmp['best_loss']
-    best_valid_loss, best_valid_kappa = train_val(prev_epoch_num+1, valid_loader, optimizer=optimizer, rate=1, train=False, mode='val')
+    best_valid_loss, best_valid_kappa = train_val(prev_epoch_num+1, valid_loader, model, optimizer=optimizer, rate=1, train=False, mode='val')
     del tmp
     print('Model Loaded!')
   

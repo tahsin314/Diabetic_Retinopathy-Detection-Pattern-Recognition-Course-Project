@@ -42,6 +42,8 @@ opts = ['normal', 'mixup', 'cutmix']
 num_class = int(params['num_class'])
 choice_weights = [1.00, 0.00, 0.00]
 target_type = params['target_type']
+crop = bool(int(params['crop']))
+ben_color = bool(int(params['ben_color'])) 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mixed_precision = bool(int(params['mixed_precision']))
 use_meta = bool(int(params['use_meta']))
@@ -65,7 +67,7 @@ pseudo_lo_thr = float(params['pseudo_lo_thr'])
 pseudo_up_thr = float(params['pseudo_up_thr'])
 
 train_aug = Compose([
-  ShiftScaleRotate(p=0.9,rotate_limit=360, border_mode= cv2.BORDER_REFLECT, value=[0, 0, 0], scale_limit=0.25),
+  ShiftScaleRotate(p=0.9,rotate_limit=360, border_mode= cv2.BORDER_CONSTANT, value=[0, 0, 0], scale_limit=0.25),
     OneOf([
     Cutout(p=0.3, max_h_size=sz//16, max_w_size=sz//16, num_holes=10, fill_value=0),
     # GridMask(num_grid=7, p=0.7, fill_value=0)
