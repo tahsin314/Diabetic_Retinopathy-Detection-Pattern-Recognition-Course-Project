@@ -21,20 +21,19 @@ print(model_names)
 # print(torch.hub.list('zhanghang1989/ResNeSt', force_reload=True))
 class Resnest(nn.Module):
 
-    def __init__(self, model_name='resnest50_fast_1s1x64d', use_meta=True, out_neurons=600, meta_neurons=150):
+    def __init__(self, model_name='resnest50_fast_1s1x64d', num_class=1):
         super().__init__()
         # self.backbone = timm.create_model(model_name, pretrained=True)
         # self.backbone = torch.hub.load('zhanghang1989/ResNeSt', model_name, pretrained=True)
         # print(self.backbone)
         self.backbone = timm.create_model(model_name, pretrained=True)
         # print(self.backbone)
-        self.use_meta = use_meta
         # self.in_features = 2048
         self.in_features = self.backbone.fc.in_features
-        self.head = Head(self.in_features,1, activation='mish', use_meta=self.use_meta)
-        self.out = nn.Linear(self.in_features, 1)
+        self.head = Head(self.in_features,num_class, activation='mish')
+        self.out = nn.Linear(self.in_features, num_class)
 
-    def forward(self, x, meta_data=None):
+    def forward(self, x):
         x = self.backbone.conv1(x)
         x = self.backbone.bn1(x)
         x = self.backbone.act1(x)
@@ -48,12 +47,12 @@ class Resnest(nn.Module):
         # x = self.backbone.avgpool(x)
         # x = self.out(x)
         # print(x.size())
-        x = self.head(x, meta_data)
+        x = self.head(x)
         return x
 
 class Attn_Resnest(nn.Module):
 
-    def __init__(self, model_name='resnest50_fast_1s1x64d', normalize_attn=False, use_meta=True, out_neurons=600, meta_neurons=150):
+    def __init__(self, model_name='resnest50_fast_1s1x64d', normalize_attn=False, num_class=1):
         super().__init__()
         self.backbone = timm.create_model(model_name, pretrained=True)
         # self.backbone = torch.hub.load('zhanghang1989/ResNeSt', model_name, pretrained=True)
@@ -61,14 +60,14 @@ class Attn_Resnest(nn.Module):
         # self.in_features = 2048
         self.in_features = self.backbone.fc.in_features
         # print(self.in_features)
-        self.head = Head(self.in_features,2, activation='mish', use_meta=self.use_meta)
+        self.head = Head(self.in_features,num_class, activation='mish')
         self.relu = Mish()
         self.maxpool = GeM()
         self.attn1 = AttentionBlock(256, 1024, 512, 4, normalize_attn=normalize_attn)
         self.attn2 = AttentionBlock(512, 1024, 512, 2, normalize_attn=normalize_attn)
-        self.output = nn.Sequential(nn.Linear(770, 128), nn.Linear(128, 1))
+        self.output = nn.Sequential(nn.Linear(770, 128), nn.Linear(128, num_class))
         
-    def forward(self, x, meta_data=None):
+    def forward(self, x):
         x = self.backbone.conv1(x)
         x = self.backbone.bn1(x)
         x = self.backbone.act1(x)
@@ -80,7 +79,7 @@ class Attn_Resnest(nn.Module):
         layer4 = self.backbone.layer4(layer3)
         a1, g1 = self.attn1(layer1, layer3)
         a2, g2 = self.attn2(layer2, layer3)
-        g = self.head(layer4, meta_data)
+        g = self.head(layer4)
         g_hat = torch.cat((g,g1,g2), dim=1) # batch_size x C
         # out = self.output1(g_hat)
         out = self.output(g_hat)

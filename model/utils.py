@@ -111,34 +111,16 @@ class Identity(nn.Module):
         return x
 
 class Head(nn.Module):
-    def __init__(self, nc, n, ps=0.5, activation='swish', use_meta=False, n_meta_features=9, meta_neurons=200, out_neurons=600):
+    def __init__(self, nc, n, ps=0.5, activation='swish'):
         super().__init__()
-        self.meta_neurons = meta_neurons
-        self.out_neurons = out_neurons
-        self.use_meta = use_meta
-        self.meta_fc = nn.Sequential(nn.Linear(n_meta_features, out_neurons),
-                                  nn.BatchNorm1d(self.out_neurons),
-                                  Mish(),
-                                  nn.Dropout(p=0.3),
-                                  nn.Linear(self.out_neurons , self.meta_neurons),  # FC layer output will have 750 features
-                                  nn.BatchNorm1d(self.meta_neurons),
-                                  Mish(),
-                                  nn.Dropout(p=0.4))
-        self.output = nn.Linear(self.out_neurons  + self.meta_neurons, 2)
+        # self.output = nn.Linear(self.out_neurons  + self.meta_neurons, 2)
         if activation=='mish':
             layers = [AdaptiveConcatPool2d(), Mish(), Flatten()]
         else:
             layers = [GeM(), Swish(), Flatten()] 
-        if not self.use_meta:
-            layers += \
-            bn_drop_lin(nc*2, 512, True, ps, Swish()) + \
-            bn_drop_lin(512, n, True, ps)
-        else:
-            layers += \
-            bn_drop_lin(nc*2, 512, True, ps, Swish()) + \
-            bn_drop_lin(512, 256, True, ps)
-            layers += [nn.Linear(256, out_neurons)]
-
+        layers += \
+        bn_drop_lin(nc*2, 512, True, ps, Swish()) + \
+        bn_drop_lin(512, n, True, ps)
         self.fc = nn.Sequential(*layers)
         
         # self._init_weight()
@@ -151,15 +133,8 @@ class Head(nn.Module):
     #             m.weight.data.fill_(1.0)
     #             m.bias.data.zero_()
         
-    def forward(self, x, meta_data=None):
-        if self.use_meta:
-            cnn_features = self.fc(x)
-            meta_features = self.meta_fc(meta_data)
-            features = torch.cat((cnn_features, meta_features), dim=1)
-            output = self.output(features)
-            return output 
-        else:
-            return self.fc(x)
+    def forward(self, x):
+        return self.fc(x)
 
 class Conv2dStaticSamePadding(nn.Conv2d):
     """ 2D Convolutions like TensorFlow, for a fixed image size"""

@@ -90,11 +90,10 @@ else:
 # model = Mixnet(pretrained_model, use_meta=use_meta, out_neurons=500, meta_neurons=250).to(device)
 # model = Hybrid().to(device)
 model = torch.nn.DataParallel(model)
-wandb.watch(model)
 # print(model.module.backbone.conv_head)
-# model.to(f'cuda:{model.device_ids[0]}')
-train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=train_aug)
+wandb.watch(model)
 
+train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=train_aug)
 
 if balanced_sampler:
   print('Using Balanced Sampler....')
@@ -207,7 +206,7 @@ def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.
       kappa = cohen_kappa_score(pred, lab, weights='quadratic')
       kappa_mean = np.mean(batch_kappa)
       wandb.log({"Epoch":epoch,  f"{mode} Loss": running_loss/epoch_samples, f"{mode} Kappa Score":kappa, f"{mode} Mean Kappa Score":kappa_mean})
-      plot_confusion_matrix(lab, pred, [i for i in range(5)])
+      plot_heatmap(model, image_path, valid_df, val_aug, crop=crop, ben_color=ben_color, sz=sz)
       try:
         plot_heatmap(model, image_path, valid_df, val_aug, crop=crop, ben_color=ben_color, sz=sz)
         cam = cv2.imread('./heatmap.png', cv2.IMREAD_COLOR)
