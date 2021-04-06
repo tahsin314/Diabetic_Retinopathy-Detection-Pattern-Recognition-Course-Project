@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from configparser import ConfigParser as cfg
 import cv2
 import pandas as pd
@@ -48,7 +48,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mixed_precision = bool(int(params['mixed_precision']))
 use_meta = bool(int(params['use_meta']))
 pretrained_model = params['pretrained_model']
-model_name = f'{pretrained_model}_dim_{sz}'
+model_name = f'Attn_{pretrained_model}_dim_{sz}_{target_type}'
 # model_name = 'efficientnet-b6_trial_stage1_fold_0'
 model_dir = params['model_dir']
 history_dir = params['history_dir']

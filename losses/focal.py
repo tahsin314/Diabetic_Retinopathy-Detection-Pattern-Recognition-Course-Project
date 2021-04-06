@@ -35,6 +35,7 @@ def criterion_margin_focal_binary_cross_entropy(logit, truth):
 
     logit = logit.view(-1)
     truth = truth.view(-1)
+    # print([i.size() for i in [logit, truth]])
     log_pos = -F.logsigmoid( logit)
     log_neg = -F.logsigmoid(-logit)
 
@@ -45,4 +46,4 @@ def criterion_margin_focal_binary_cross_entropy(logit, truth):
     weight = truth*weight_pos + (1-truth)*weight_neg
     loss = margin + weight*(1 - prob) ** gamma * log_prob
     # loss = loss.mean()
-    return loss
+    return loss.sum()

@@ -63,7 +63,7 @@ df_messidor = Messidor_Process(f'{data_dir}/Messidor Dataset')
 df_idrid = IDRID_Process(data_dir)
 test_df['image_id'] = test_df['id_code'].map(lambda x: f"{test_image_path}/{x}.png")
 test_df['diagnosis'] = test_df['diagnosis'].map(lambda x: x)
-df = pd.concat([df_messidor, df, df_idrid, test_df], ignore_index=True)
+df = pd.concat([df_messidor, df, df_idrid], ignore_index=True)
 # Delete later
 # df = test_df
 df = df.sample(frac=1, random_state=SEED).reset_index(drop=True)
@@ -79,14 +79,14 @@ for i, (train_index, val_index) in enumerate(skf.split(X, y)):
     df.loc[val_idx, 'fold'] = i
 
 df['fold'] = df['fold'].astype('int')
-train_df = df[(df['fold']!=fold) & (df['fold']!=n_fold-1)]
+train_df = df[(df['fold']!=fold)]
 valid_df = df[df['fold']==fold]
-test_df = df[df['fold']==n_fold-1]
+# test_df = df[df['fold']==n_fold-1]
 # print(len(train_df), len(valid_df), len(test_df))
 if 'eff' in model_name:
   model = EffNet(pretrained_model=pretrained_model, num_class=num_class, freeze_upto=freeze_upto).to(device)
 else:
-  model = Resnest(pretrained_model, num_class=num_class).to(device)
+  model = Attn_Resnest(pretrained_model, num_class=num_class).to(device)
 # model = Mixnet(pretrained_model, use_meta=use_meta, out_neurons=500, meta_neurons=250).to(device)
 # model = Hybrid().to(device)
 model = torch.nn.DataParallel(model)
@@ -207,16 +207,10 @@ def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.
       kappa_mean = np.mean(batch_kappa)
       wandb.log({"Epoch":epoch,  f"{mode} Loss": running_loss/epoch_samples, f"{mode} Kappa Score":kappa, f"{mode} Mean Kappa Score":kappa_mean})
       plot_heatmap(model, image_path, valid_df, val_aug, crop=crop, ben_color=ben_color, sz=sz)
-      try:
-        plot_heatmap(model, image_path, valid_df, val_aug, crop=crop, ben_color=ben_color, sz=sz)
-        cam = cv2.imread('./heatmap.png', cv2.IMREAD_COLOR)
-        cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
-        wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})
-      except Exception as e:
-        print(f"\033[91mException: {e}\033[91m")
-        pass
-
-      conf = cv2.imread('./conf.png', cv2.IMREAD_COLOR)
+      cam = cv2.imread('./heatmap_0.png', cv2.IMREAD_COLOR)
+      cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
+      wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})
+      conf = cv2.imread('./conf_0.png', cv2.IMREAD_COLOR)
       conf = cv2.cvtColor(conf, cv2.COLOR_BGR2RGB)
 
       wandb.log({"Confusion Matrix": [wandb.Image(conf, caption="Confusion Matrix")]})
@@ -241,8 +235,8 @@ plist = [
         {'params': model.module.backbone.parameters(),  'lr': learning_rate/20},
         # {'params': model.module.Attn_Resnest.resnest.parameters(),  'lr': learning_rate/100},
         # {'params': model.module.effnet.parameters(),  'lr': learning_rate/100},
-        # {'params': model.module.attn1.parameters(), 'lr': learning_rate},
-        # {'params': model.module.attn2.parameters(), 'lr': learning_rate},
+        {'params': model.module.attn1.parameters(), 'lr': learning_rate},
+        {'params': model.module.attn2.parameters(), 'lr': learning_rate},
         # {'params': model.module.head_res.parameters(), 'lr': learning_rate}, 
         # {'params': model.module.eff_conv.parameters(),  'lr': learning_rate}, 
         # {'params': model.module.eff_attn.parameters(),  'lr': learning_rate}, 
@@ -254,8 +248,9 @@ plist = [
 optimizer = Ralamb(plist, lr=learning_rate)
 # nn.BCEWithLogitsLoss(), ArcFaceLoss(), FocalLoss(logits=True).to(device), LabelSmoothing().to(device) 
 # criterion = nn.BCEWithLogitsLoss(reduction='sum')
-# criterion = criterion_margin_focal_binary_cross_entropy
-criterion = nn.MSELoss(reduction='sum')
+if target_type == 'regression':
+  criterion = nn.MSELoss(reduction='none')
+else:criterion = criterion_margin_focal_binary_cross_entropy
 # criterion = ArcFaceLoss().to(device)
 # criterion = HybridLoss(alpha=2, beta=1).to(device)
 # lr_finder = LRFinder(model, optimizer, criterion, device="cuda")
@@ -264,7 +259,7 @@ criterion = nn.MSELoss(reduction='sum')
 # lr_finder.reset()
 # print(f"Suggested LR: {suggested_lr}")
 lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=patience, verbose=True, threshold=1e-4, threshold_mode='rel', cooldown=0, min_lr=1e-7, eps=1e-08)
-cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate], epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
+cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate, learning_rate, learning_rate], epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/20,  learning_rate], max_lr=[learning_rate/10, 2*learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/250, learning_rate/10, learning_rate/10, learning_rate/10], max_lr=[learning_rate/25, learning_rate, learning_rate, learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
 
@@ -294,13 +289,13 @@ def main():
   for epoch in range(prev_epoch_num, n_epochs):
     torch.cuda.empty_cache()
     print(gc.collect())
-    rate = 1
-    if epoch < 20:
-      rate = 1
-    elif epoch>=20 and rate>0.65:
-      rate = np.exp(-(epoch-20)/40)
-    else:
-      rate = 0.65
+    rate = 1.0
+    # if epoch < 20:
+    #   rate = 1
+    # elif epoch>=20 and rate>0.65:
+    #   rate = np.exp(-(epoch-20)/30)
+    # else:
+    #   rate = 0.65
 
     train_val(epoch, train_loader, model, optimizer=optimizer, choice_weights=choice_weights, rate=rate, train=True, mode='train')
     wandb.log(params)
@@ -316,6 +311,7 @@ def main():
       'best_loss':valid_loss, 'best_kappa':valid_kappa, 'epoch':epoch}
       best_valid_loss, best_valid_kappa = save_model(valid_loss, valid_kappa, best_valid_loss, best_valid_kappa, best_state, os.path.join(model_dir, model_name))
       print("#"*20)
+      os.system("rm -rf *.png")
     except Exception as e:
       print(f'\033[91mException: {e}\033[91m')
       print("Can not calculate Kappa Score. Moving on to the next epoch. ")

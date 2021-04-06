@@ -56,8 +56,6 @@ class Attn_Resnest(nn.Module):
         super().__init__()
         self.backbone = timm.create_model(model_name, pretrained=True)
         # self.backbone = torch.hub.load('zhanghang1989/ResNeSt', model_name, pretrained=True)
-        self.use_meta = use_meta
-        # self.in_features = 2048
         self.in_features = self.backbone.fc.in_features
         # print(self.in_features)
         self.head = Head(self.in_features,num_class, activation='mish')
@@ -65,7 +63,7 @@ class Attn_Resnest(nn.Module):
         self.maxpool = GeM()
         self.attn1 = AttentionBlock(256, 1024, 512, 4, normalize_attn=normalize_attn)
         self.attn2 = AttentionBlock(512, 1024, 512, 2, normalize_attn=normalize_attn)
-        self.output = nn.Sequential(nn.Linear(770, 128), nn.Linear(128, num_class))
+        self.output = nn.Sequential(nn.Linear(769, 128), nn.Linear(128, num_class))
         
     def forward(self, x):
         x = self.backbone.conv1(x)
@@ -81,7 +79,6 @@ class Attn_Resnest(nn.Module):
         a2, g2 = self.attn2(layer2, layer3)
         g = self.head(layer4)
         g_hat = torch.cat((g,g1,g2), dim=1) # batch_size x C
-        # out = self.output1(g_hat)
         out = self.output(g_hat)
         return out
 

@@ -56,7 +56,8 @@ def visualize_cam(mask, img, alpha=0.8, beta=0.15):
 
 
 def grad_cam_gen(model, img, mixed_precision = False, device = 'cuda'):     
-    configs = [dict(model_type='resnet', arch=model, layer_name='conv_head')]
+    # configs = [dict(model_type='resnet', arch=model, layer_name='conv_head')]
+    configs = [dict(model_type='resnet', arch=model, layer_name='layer4')]
     for config in configs:
         config['arch'].to(device).eval()
     # print(config['arch'])
@@ -96,7 +97,7 @@ def plot_heatmap(model, path, valid_df, val_aug, crop=True, ben_color=False, dev
             image = (image-np.min(image))/(np.max(image)-np.min(image))
             plt.imshow(image)
             ax.set_title('Label: %s Prediction: %s' % (row['diagnosis'], int(np.clip(np.round(np.ravel(prediction)[0]), 0, 4))))
-            plt.savefig('heatmap.png')
+            plt.savefig('heatmap_0.png')
 
 def plot_confusion_matrix(predictions, actual_labels, labels):
     cm = confusion_matrix(predictions, actual_labels, labels)
@@ -106,7 +107,7 @@ def plot_confusion_matrix(predictions, actual_labels, labels):
     sns.heatmap(cmn, annot=True, fmt='.2f', xticklabels=labels, yticklabels=labels)
     plt.ylabel('Actual')
     plt.xlabel('Predicted')
-    plt.savefig('conf.png')
+    plt.savefig('conf_0.png')
 
 def crop_image_from_gray(img,tol=7):
     if img.ndim ==2:
@@ -278,7 +279,6 @@ def one_hot(index, classes):
 def ohem_loss(rate, base_crit, cls_pred, cls_target):
 
     batch_size = cls_pred.size(0) 
-    # ohem_cls_loss = base_crit(cls_pred, cls_target, reduction='none', ignore_index=-1)
     ohem_cls_loss = base_crit(cls_pred, cls_target)
     if rate==1:
         return ohem_cls_loss.sum()
