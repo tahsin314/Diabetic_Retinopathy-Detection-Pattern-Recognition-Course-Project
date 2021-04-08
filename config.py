@@ -13,7 +13,7 @@ from augmentations.color_constancy import ColorConstancy
 from losses.arcface import ArcFaceLoss
 from losses.focal import criterion_margin_focal_binary_cross_entropy
 from model.seresnext import seresnext
-from model.effnet import EffNet, EffNet_ArcFace
+from model.effnet import EffNet
 from utils import *
 from albumentations.augmentations.transforms import Equalize, Posterize, Downscale, Rotate 
 from albumentations import (
@@ -48,7 +48,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mixed_precision = bool(int(params['mixed_precision']))
 use_meta = bool(int(params['use_meta']))
 pretrained_model = params['pretrained_model']
-model_name = f'Attn_{pretrained_model}_dim_{sz}_{target_type}'
+model_name = f'{pretrained_model}_dim_{sz}_{target_type}'
 # model_name = 'efficientnet-b6_trial_stage1_fold_0'
 model_dir = params['model_dir']
 history_dir = params['history_dir']

@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset,DataLoader
 from torchvision import transforms,models
+import pytorch_lightning as pl
 from tqdm import tqdm_notebook as tqdm
 from utils import *
 import warnings
@@ -70,3 +71,31 @@ class DRDataset(Dataset):
 
     def get_labels(self):
         return list(self.labels)
+
+class DRDataModule(pl.LightningDataModule):
+    def __init__(self, train_ds, valid_ds, test_ds, 
+    batch_size=32, sampler=None, shuffle=True, num_workers=4):
+        super().__init__()
+        self.train_ds = train_ds
+        self.valid_ds = valid_ds
+        self.test_ds = test_ds
+        # self.train_transform = train_transform
+        # self.valid_transform = valid_transform
+        # self.test_transform = test_transform
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.num_workers = num_workers
+        self.sampler = sampler
+
+    def train_dataloader(self):
+        train_loader = DataLoader(self.train_ds,batch_size=self.batch_size, sampler=self.sampler, shuffle=self.shuffle, num_workers=self.num_workers)
+        return train_loader
+
+    def val_dataloader(self):
+        val_loader = DataLoader(self.valid_ds,batch_size=self.batch_size, sampler=self.sampler, shuffle=self.shuffle, num_workers=self.num_workers)
+        return val_loader
+
+    def test_dataloader(self):
+        test_loader = DataLoader(self.test_ds,batch_size=self.batch_size, sampler=self.sampler, shuffle=self.shuffle, num_workers=self.num_workers)
+        return test_loader
+        

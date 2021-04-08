@@ -26,7 +26,13 @@ from torch import optim
 from torch.nn import functional as F
 from torch.utils.data import Dataset,DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from DRDataset import DRDataset
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import WandbLogger
+# import labml
+# from labml import experiment
+# from labml.utils.lightening import LabMLLighteningLogger
+from DRDataset import DRDataset, DRDataModule
 from catalyst.data.sampler import BalanceClassSampler
 from losses.arcface import ArcFaceLoss
 from losses.focal import criterion_margin_focal_binary_cross_entropy
@@ -34,7 +40,7 @@ from losses.dice import HybridLoss
 from utils import *
 from optimizers import Over9000
 from model.seresnext import seresnext
-from model.effnet import EffNet, EffNet_ArcFace
+from model.effnet import EffNet
 from model.resnest import Resnest, Mixnet, Attn_Resnest
 from model.hybrid import Hybrid
 sys.path.insert(0, 'pytorch_lr_finder')
@@ -44,7 +50,8 @@ import wandb
 
 seed_everything(SEED)
 
-wandb.init(project="Diabetic_Retinopathy", config=params)
+wandb_logger = WandbLogger(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
+wandb.init(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
 wandb.run.name= model_name
 m_p = mixed_precision
 if m_p:
@@ -86,7 +93,7 @@ valid_df = df[df['fold']==fold]
 if 'eff' in model_name:
   model = EffNet(pretrained_model=pretrained_model, num_class=num_class, freeze_upto=freeze_upto).to(device)
 else:
-  model = Attn_Resnest(pretrained_model, num_class=num_class).to(device)
+  model = Resnest(pretrained_model, num_class=num_class).to(device)
 # model = Mixnet(pretrained_model, use_meta=use_meta, out_neurons=500, meta_neurons=250).to(device)
 # model = Hybrid().to(device)
 model = torch.nn.DataParallel(model)
@@ -107,136 +114,13 @@ valid_loader = DataLoader(valid_ds, batch_size=batch_size, shuffle=True, num_wor
 test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz, target_type=target_type, crop=crop, ben_color=ben_color, transforms=val_aug)
 test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
-def train_val(epoch, dataloader, model, optimizer, choice_weights= [0.8, 0.1, 0.1], rate=1, train=True, mode='train'):
-  global m_p
-  global result
-  global accum_step
-  global batch_size
-  t1 = time.time()
-  running_loss = 0
-  epoch_samples = 0
-  batch_kappa = []
-  pred = []
-  lab = []
-  if train:
-    model.train()
-    print("Initiating train phase ...")
-  else:
-    model.eval()
-    print("Initiating val phase ...")
-  for idx, (_, inputs,labels) in enumerate(dataloader):
-    with torch.set_grad_enabled(train):
-      inputs = inputs.to(device)
-      labels = labels.view(-1, num_class).float().to(device)
-      epoch_samples += len(inputs)
-      if not train:
-        choice_weights = [1.0, 0, 0]
-      choice = choices(opts, weights=choice_weights)
-      optimizer.zero_grad()
-      with torch.cuda.amp.autocast(m_p):
-        if choice[0] == 'normal':
-          outputs = model(inputs.float())
-          loss = ohem_loss(rate, criterion, outputs, labels)
-          running_loss += loss.item()
-        
-        elif choice[0] == 'mixup':
-          inputs, targets = mixup(inputs, labels, np.random.uniform(0.8, 1.0))
-          outputs = model(inputs.float())
-          loss = mixup_criterion(outputs, targets, criterion=criterion, rate=rate)
-          running_loss += loss.item()
-        
-        elif choice[0] == 'cutmix':
-          inputs, targets = cutmix(inputs, labels, np.random.uniform(0.8, 1.0))
-          outputs = model(inputs.float())
-          loss = cutmix_criterion(outputs, targets, criterion=criterion, rate=rate)
-          running_loss += loss.item()
-      
-        loss = loss/accum_step
-      
-        if train:
-          if m_p:
-            scaler.scale(loss).backward()
-            if (idx+1) % accum_step == 0:
-              scaler.step(optimizer) 
-              scaler.update() 
-              optimizer.zero_grad()
-              # cyclic_scheduler.step()
-          else:
-            loss.backward()
-            if (idx+1) % accum_step == 0:
-              optimizer.step()
-              optimizer.zero_grad()
-              # cyclic_scheduler.step()    
-      elapsed = int(time.time() - t1)
-      eta = int(elapsed / (idx+1) * (len(dataloader)-(idx+1)))
-      if target_type == 'regression':
-        pr = torch.round(outputs).view(-1).detach().cpu().numpy()
-        la = labels.view(-1).cpu().numpy()
-
-      if target_type == 'ordinal_regression':
-        pr = torch.round(torch.sum((torch.sigmoid(outputs)>0.5).float(), axis=1)-1).view(-1).detach().cpu().numpy()
-        la = torch.round(torch.sum(labels, axis=1)-1).view(-1).detach().cpu().numpy()
-
-      pred.extend(pr)
-      lab.extend(la)
-      batch_kappa.append(cohen_kappa_score(pred, lab, weights='quadratic'))
-      # pred.extend(torch.argmax(outputs, dim=1).detach().cpu().numpy())
-      # lab.extend(torch.argmax(labels, dim=1).cpu().numpy())
-      if train:
-        wandb.log({"Train Loss": running_loss/epoch_samples})
-        progress = int(30*(idx/len(dataloader)))
-        # bar = "\033[92m"+"⚪"*progress+"◯"*(30-progress)+"  "+str(int(100*progress/30)+"%/100%\033[92m")
-        bar = f"\033[92m {'⚪'*progress}{'◯ '*(30-progress)}  {int(100*progress/30)}%/100%\033[92m"
-        msg = f"Epoch: {epoch} Progress: [{idx}/{len(dataloader)}] loss: {(running_loss/epoch_samples):.4f} Time: {elapsed}s ETA: {eta} s"
-      else:
-        wandb.log({f"{mode} Loss": running_loss/epoch_samples})
-        progress = int(30*(idx/len(dataloader)))
-        # bar = "\033[92m"+"⚪"*progress+"◯"*(30-progress)+"  "+str(int(100*progress/30)+"%/100%\033[92m")
-        bar = f"\033[92m {'⚪'*progress}{'◯ '*(30-progress)}  {int(100*progress/30)}%/100%\033[92m"
-        msg = f'Epoch {epoch} Progress: [{idx}/{len(dataloader)}] loss: {(running_loss/epoch_samples):.4f} Time: {elapsed}s ETA: {eta} s'
-      # print(bar, end= '\r')
-      print(msg, end='\r')
-  history.loc[epoch, f'{mode}_loss'] = running_loss/epoch_samples
-  history.loc[epoch, f'{mode}_time'] = elapsed
-  history.loc[epoch, 'rate'] = rate  
-  if mode !='train':
-    pred = np.clip(np.array(pred), 0, 4)
-    lab = np.array(lab)
-    try:
-      kappa = cohen_kappa_score(pred, lab, weights='quadratic')
-      kappa_mean = np.mean(batch_kappa)
-      wandb.log({"Epoch":epoch,  f"{mode} Loss": running_loss/epoch_samples, f"{mode} Kappa Score":kappa, f"{mode} Mean Kappa Score":kappa_mean})
-      plot_heatmap(model, image_path, valid_df, val_aug, crop=crop, ben_color=ben_color, sz=sz)
-      cam = cv2.imread('./heatmap_0.png', cv2.IMREAD_COLOR)
-      cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
-      wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})
-      conf = cv2.imread('./conf_0.png', cv2.IMREAD_COLOR)
-      conf = cv2.cvtColor(conf, cv2.COLOR_BGR2RGB)
-
-      wandb.log({"Confusion Matrix": [wandb.Image(conf, caption="Confusion Matrix")]})
-    except Exception as e:
-      print(f"\033[91mException: {e}\033[91m")
-      print('\033[91mMixed Precision\033[0m rendering nan value. Forcing \033[91mMixed Precision\033[0m to be False ...')
-      batch_size = batch_size//2
-      m_p = False
-      accum_step = 2*accum_step
-
-    lr_reduce_scheduler.step(running_loss)
-    msg = f'{mode} Loss: {running_loss/epoch_samples:.4f} \n {mode} kappa: {kappa:.4f}'
-    print(msg)
-    
-    history.loc[epoch, f'{mode}_loss'] = running_loss/epoch_samples
-    history.loc[epoch, f'{mode}_kappa'] = kappa
-    history.to_csv(f'{history_dir}/history_{model_name}_{sz}.csv', index=False)
-    return running_loss/epoch_samples, kappa
-
 # Hybrid model
 plist = [ 
         {'params': model.module.backbone.parameters(),  'lr': learning_rate/20},
         # {'params': model.module.Attn_Resnest.resnest.parameters(),  'lr': learning_rate/100},
         # {'params': model.module.effnet.parameters(),  'lr': learning_rate/100},
-        {'params': model.module.attn1.parameters(), 'lr': learning_rate},
-        {'params': model.module.attn2.parameters(), 'lr': learning_rate},
+        # {'params': model.module.attn1.parameters(), 'lr': learning_rate},
+        # {'params': model.module.attn2.parameters(), 'lr': learning_rate},
         # {'params': model.module.head_res.parameters(), 'lr': learning_rate}, 
         # {'params': model.module.eff_conv.parameters(),  'lr': learning_rate}, 
         # {'params': model.module.eff_attn.parameters(),  'lr': learning_rate}, 
@@ -254,73 +138,190 @@ else:criterion = criterion_margin_focal_binary_cross_entropy
 # criterion = ArcFaceLoss().to(device)
 # criterion = HybridLoss(alpha=2, beta=1).to(device)
 # lr_finder = LRFinder(model, optimizer, criterion, device="cuda")
-# lr_finder.range_test(train_loader=train_loader, accumulation_steps=accum_step, end_lr=10, num_iter=300, step_mode="exp")
+# lr_finder.range_test(train_loader=train_loader, accumulation_steps=accum_step, end_lr=50, num_iter=300, step_mode="exp")
 # _, suggested_lr = lr_finder.plot(suggest_lr=True)
 # lr_finder.reset()
 # print(f"Suggested LR: {suggested_lr}")
-lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=patience, verbose=True, threshold=1e-4, threshold_mode='rel', cooldown=0, min_lr=1e-7, eps=1e-08)
-cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate, learning_rate, learning_rate], epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
+lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
+cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate], epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/20,  learning_rate], max_lr=[learning_rate/10, 2*learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/250, learning_rate/10, learning_rate/10, learning_rate/10], max_lr=[learning_rate/25, learning_rate, learning_rate, learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
 
 
 
-
-
-
-def main():
-  prev_epoch_num = 0
-  best_valid_loss = np.inf
-  best_valid_kappa = 0.0
-
-  if load_model:
-    tmp = torch.load(os.path.join(model_dir, model_name+'_loss.pth'))
-    model.load_state_dict(tmp['model'])
-    optimizer.load_state_dict(tmp['optim'])
-    lr_reduce_scheduler.load_state_dict(tmp['scheduler'])
-    cyclic_scheduler.load_state_dict(tmp['cyclic_scheduler'])
-    scaler.load_state_dict(tmp['scaler'])
-    prev_epoch_num = tmp['epoch']
-    best_valid_loss = tmp['best_loss']
-    best_valid_loss, best_valid_kappa = train_val(prev_epoch_num+1, valid_loader, model, optimizer=optimizer, rate=1, train=False, mode='val')
-    del tmp
-    print('Model Loaded!')
+class LightningDR(pl.LightningModule):
+  def __init__(self, model, loss_fn, optim, plist, 
+  batch_size, lr_scheduler, num_class=1, patience=3, factor=0.5,
+  target_type='regression', learning_rate=1e-3):
+      super().__init__()
+      self.model = model
+      self.num_class = num_class
+      self.loss_fn = loss_fn
+      self.optim = optim
+      self.plist = plist 
+      self.target_type= target_type
+      self.lr_scheduler = lr_scheduler
+      self.patience = patience
+      self.factor = factor
+      self.learning_rate = learning_rate
+      self.batch_size = batch_size
   
-  for epoch in range(prev_epoch_num, n_epochs):
-    torch.cuda.empty_cache()
-    print(gc.collect())
-    rate = 1.0
-    # if epoch < 20:
-    #   rate = 1
-    # elif epoch>=20 and rate>0.65:
-    #   rate = np.exp(-(epoch-20)/30)
-    # else:
-    #   rate = 0.65
+  def forward(self, x):
+      return self.model(x)
 
-    train_val(epoch, train_loader, model, optimizer=optimizer, choice_weights=choice_weights, rate=rate, train=True, mode='train')
-    wandb.log(params)
-    try:
-      valid_loss, valid_kappa = train_val(epoch, valid_loader, model, optimizer=optimizer, rate=1.00, train=False, mode='val')
-      print("#"*20)
-      print(f"Epoch {epoch} Report:")
-      print(f"Validation Loss: {valid_loss :.4f} Validation kappa: {valid_kappa :.4f}")
-      best_state = {'model': model.state_dict(), 'optim': optimizer.state_dict(), 'scheduler':lr_reduce_scheduler.state_dict(), 
+  def configure_optimizers(self):
+        optimizer = self.optim(self.plist, self.learning_rate)
+        lr_sc = self.lr_scheduler(optimizer, mode='min', factor=0.5, 
+        patience=patience, verbose=True, threshold=1e-4, threshold_mode='rel', cooldown=0, min_lr=1e-7, eps=1e-08)
+        return {
+       'optimizer': optimizer,
+       'lr_scheduler': lr_sc,
+       'monitor': 'val_loss'
+   }
+  #  { 
+  #    'cyclic_scheduler': self.cyclic_scheduler,
+  #  })
+    
+  def loss_func(self, logits, labels):
+      return self.loss_fn(logits, labels)
+  
+  def training_step(self, train_batch, batch_idx):
+      _, x, y = train_batch
+      x, y = x.float(), y.float()
+      logits = self.forward(x)
+      loss = self.loss_func(logits, y)
+      self.log('train_loss', loss)
+      return loss
+
+  def validation_step(self, val_batch, batch_idx):
+      _, x, y = val_batch
+      x, y = x.float(), y.float()
+      logits = self.forward(x)
+      loss = self.loss_func(logits, y)
+      self.log('val_loss', loss)
+      return {'val_loss':loss, 'probs':logits, 'gt':y}
+
+  
+  def test_step(self, test_batch, batch_idx):
+      _, x, y = test_batch
+      x, y = x.float(), y.float()
+      logits = self.forward(x)
+      loss = self.loss_func(logits, y)
+      self.log('test_loss', loss)
+      return {'test_loss':loss, 'probs':logits, 'gt':y}
+
+  def label_processor(self, probs, gt):
+    if self.target_type == 'regression':
+          pr = np.round(probs.view(-1).detach().cpu().numpy())
+          pr = np.clip(pr, 0, 4)
+          la = gt.view(-1).cpu().numpy()
+
+    if self.target_type == 'ordinal_regression':
+      pr = torch.round(torch.sum((torch.sigmoid(probs)>0.5).float(), axis=1)-1).view(-1).detach().cpu().numpy()
+      pr = np.clip(pr, 0, 4)
+      la = torch.round(torch.sum(gt, axis=1)-1).view(-1).detach().cpu().numpy()
+
+    return pr, la
+
+
+  def validation_step_end(self, outputs):
+      avg_loss = outputs['val_loss']
+      probs = outputs['probs']
+      gt = outputs['gt']
+      pr, la = self.label_processor(probs, gt)
+      kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
+      val_logs = {'val_loss': avg_loss, 'val_kappa': kappa}
+      return {'val_loss': avg_loss, 'probs': pr, 'gt':la}
+
+  def validation_epoch_end(self, outputs):
+    # This is what happens at the end of validation epoch. Usually gathering all predictions
+    # outputs is a list of dictionary from each step.
+    # avg_loss = torch.cat([out['val_loss'] for out in outputs]).mean()
+    avg_loss = torch.Tensor([out['val_loss'] for out in outputs]).mean().numpy()
+    # print(avg_loss)
+    # probs = torch.Tensor([out['probs'] for out in outputs])
+    probs = torch.cat([torch.tensor(out['probs']) for out in outputs], dim=0)
+    # gt = torch.Tensor([out['gt'] for out in outputs])
+    gt = torch.cat([torch.tensor(out['gt']) for out in outputs], dim=0)
+    # print(gt.size(), probs.size()) 
+    pr, la = self.label_processor(probs, gt)
+
+    kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
+    print(f'Epoch: {self.current_epoch} Loss : {avg_loss:.2f}, kappa: {kappa:.4f}')
+    val_logs = {'val_loss': avg_loss, 'val_kappa': kappa}
+    return {'avg_val_loss': avg_loss, 'log': val_logs}
+    
+  def test_epoch_end(self, outputs):
+      # This is what happens at the end of validation epoch. Usually gathering all predictions
+      # outputs is a list of dictionary from each step.
+      avg_loss = torch.cat([out['test_loss'] for out in outputs], dim=0).mean()
+      probs = torch.cat([out['probs'] for out in outputs], dim=0)
+      gt = torch.cat([out['gt'] for out in outputs], dim=0)
+      probs = probs.detach().cpu().numpy()
+      gt = gt.detach().cpu().numpy()
       
-      'cyclic_scheduler':cyclic_scheduler.state_dict(), 
-            'scaler': scaler.state_dict(),
-      'best_loss':valid_loss, 'best_kappa':valid_kappa, 'epoch':epoch}
-      best_valid_loss, best_valid_kappa = save_model(valid_loss, valid_kappa, best_valid_loss, best_valid_kappa, best_state, os.path.join(model_dir, model_name))
-      print("#"*20)
-      os.system("rm -rf *.png")
-    except Exception as e:
-      print(f'\033[91mException: {e}\033[91m')
-      print("Can not calculate Kappa Score. Moving on to the next epoch. ")
-  tmp = torch.load(os.path.join(model_dir, model_name+'_loss.pth'))
-  model.load_state_dict(tmp['model'])
-  test_loss, test_kappa = train_val(-1, test_loader, model, optimizer=optimizer, rate=1.00, train=False, mode='test')
-  print(test_loss, test_kappa)
-   
-if __name__== '__main__':
-  main()
+      pr, la = self.label_processor(probs, gt)
+
+      kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
+      test_logs = {'test_loss': avg_loss, 'test_kappa': kappa}
+      print(f'Loss: {avg_loss:.2f}, kappa: {kappa:.4f}')
+
+      return {'avg_test_loss': avg_loss, 'log': test_logs}
 
 
+data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
+
+# train
+model = LightningDR(model, nn.MSELoss(reduction='mean'), Ralamb, plist, batch_size, 
+lr_reduce_scheduler, num_class, target_type, learning_rate = learning_rate)
+checkpoint_callback1 = ModelCheckpoint(
+    monitor='val_loss',
+    dirpath='model_dir',
+    filename=f"{model_name}_loss",
+    save_top_k=1,
+    mode='min',
+)
+
+checkpoint_callback2 = ModelCheckpoint(
+    monitor='val_kappa',
+    dirpath='model_dir',
+    filename=f"{model_name}_kappa",
+    save_top_k=1,
+    mode='max',
+)
+
+trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Usually the auto is pretty bad. You should instead plot and pick manually.
+                  # gradient_clip_val=1,
+                  num_sanity_val_steps=10,
+                  accumulate_grad_batches = accum_step,
+                  logger=wandb_logger,  # Comment that out to reactivate sanity but the ROC will fail if the sample has only class 0
+                #  checkpoint_callback=checkpoint_callback,
+                  gpus=1,
+                  auto_scale_batch_size=True,
+                  # early_stop_callback=False,
+                  progress_bar_refresh_rate=1, 
+                  callbacks=[checkpoint_callback1, checkpoint_callback1])
+trainer.train_dataloader = data_module.train_dataloader
+# trainer.tune(model)
+# Run learning rate finder
+print(model.learning_rate)
+# lr_finder = trainer.tuner.lr_find(model, train_loader, max_lr=50, num_training=200)
+
+# Results can be found in
+# print(lr_finder.results)
+
+# Plot with
+# fig = lr_finder.plot(suggest=True, show=True)
+# fig.savefig('lr_finder.png')
+# fig.show()
+
+# Pick point based on plot, or get suggestion
+# new_lr = lr_finder.suggestion()
+# print(f"Suggested LR: {new_lr}")
+# update hparams of the model
+# model.hparams.lr = new_lr
+# model.learning_rate = new_lr
+# wandb.log({'Suggested LR': new_lr})
+# with experiment.record(name='sample', exp_conf=params, disable_screen=True):
+        # trainer.fit(model, data_loader)
+trainer.fit(model, data_module)

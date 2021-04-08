@@ -56,8 +56,8 @@ def visualize_cam(mask, img, alpha=0.8, beta=0.15):
 
 
 def grad_cam_gen(model, img, mixed_precision = False, device = 'cuda'):     
-    # configs = [dict(model_type='resnet', arch=model, layer_name='conv_head')]
-    configs = [dict(model_type='resnet', arch=model, layer_name='layer4')]
+    configs = [dict(model_type='resnet', arch=model, layer_name='conv_head')]
+    # configs = [dict(model_type='resnet', arch=model, layer_name='layer4')]
     for config in configs:
         config['arch'].to(device).eval()
     # print(config['arch'])
