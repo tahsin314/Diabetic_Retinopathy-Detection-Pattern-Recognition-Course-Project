@@ -105,11 +105,14 @@ train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target
 
 if balanced_sampler:
   print('Using Balanced Sampler....')
-  train_loader = DataLoader(train_ds,batch_size=batch_size, sampler=BalanceClassSampler(labels=train_ds.get_labels(), mode="upsampling"), shuffle=False, num_workers=4)
+  train_loader = DataLoader(train_ds,batch_size=batch_size, sampler=
+  BalanceClassSampler(labels=train_ds.get_labels(), mode="upsampling"), shuffle=False, num_workers=4)
 else:
-  train_loader = DataLoader(train_ds,batch_size=batch_size, shuffle=True, drop_last=True, num_workers=4)
+  train_loader = DataLoader(train_ds,batch_size=batch_size, 
+  shuffle=True, drop_last=True, num_workers=4)
 
-valid_ds = DRDataset(valid_df.image_id.values, valid_df.diagnosis.values, target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=val_aug)
+valid_ds = DRDataset(valid_df.image_id.values, valid_df.diagnosis.values, 
+target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=val_aug)
 valid_loader = DataLoader(valid_ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
 test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz, target_type=target_type, crop=crop, ben_color=ben_color, transforms=val_aug)
@@ -137,15 +140,10 @@ if target_type == 'regression':
   criterion = nn.MSELoss(reduction='mean')
   # criterion = XSigmoidLoss()
 else:
+  # criterion = nn.MSELoss(reduction='mean')
   # criterion = nn.BCEWithLogitsLoss(reduction='sum')
   criterion = criterion_margin_focal_binary_cross_entropy
-# criterion = ArcFaceLoss().to(device)
-# criterion = HybridLoss(alpha=2, beta=1).to(device)
-# lr_finder = LRFinder(model, optimizer, criterion, device="cuda")
-# lr_finder.range_test(train_loader=train_loader, accumulation_steps=accum_step, end_lr=50, num_iter=300, step_mode="exp")
-# _, suggested_lr = lr_finder.plot(suggest_lr=True)
-# lr_finder.reset()
-# print(f"Suggested LR: {suggested_lr}")
+
 lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
 cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate], epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/20,  learning_rate], max_lr=[learning_rate/10, 2*learning_rate], step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
@@ -193,7 +191,7 @@ class LightningDR(pl.LightningModule):
     _, x, y = batch
     x, y = x.float(), y.float()
     logits = self.forward(x)
-    loss = self.loss_func(logits, torch.squeeze(y))
+    loss = self.loss_func(torch.squeeze(logits), torch.squeeze(y))
     return loss, logits, y  
   
   def training_step(self, train_batch, batch_idx):
@@ -206,7 +204,6 @@ class LightningDR(pl.LightningModule):
       self.log('val_loss', loss)
       return {'val_loss':loss, 'probs':logits, 'gt':y}
 
-  
   def test_step(self, test_batch, batch_idx):
       loss, logits, y = self.step(test_batch)
       self.log('test_loss', loss)
@@ -268,14 +265,14 @@ checkpoint_callback2 = ModelCheckpoint(
     mode='max',
 )
 
-trainer = pl.Trainer(max_epochs=3, precision=16, auto_lr_find=True,  # Usually the auto is pretty bad. You should instead plot and pick manually.
+trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Usually the auto is pretty bad. You should instead plot and pick manually.
                   gradient_clip_val=100,
                   num_sanity_val_steps=10,
                   profiler="simple",
                   weights_summary='top',
                   accumulate_grad_batches = accum_step,
                   logger=wandb_logger,  # Comment that out to reactivate sanity but the ROC will fail if the sample has only class 0
-                #  checkpoint_callback=checkpoint_callback,
+                  checkpoint_callback=True,
                   gpus=1,
                   auto_scale_batch_size=True,
                   benchmark=True,
