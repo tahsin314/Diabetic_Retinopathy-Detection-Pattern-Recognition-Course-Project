@@ -249,7 +249,7 @@ class LightningDR(pl.LightningModule):
     conf = cv2.cvtColor(conf, cv2.COLOR_BGR2RGB)
     wandb.log({"Confusion Matrix": 
     [wandb.Image(conf, caption="Confusion Matrix")]})
-    return self.epoch_end('test', outputs)
+    return log_dict
 
 data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
 
