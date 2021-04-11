@@ -55,9 +55,9 @@ def visualize_cam(mask, img, alpha=0.8, beta=0.15):
     return heatmap, result
 
 
-def grad_cam_gen(model, img, mixed_precision = False, device = 'cuda'):     
-    configs = [dict(model_type='resnet', arch=model, layer_name='conv_head')]
-    # configs = [dict(model_type='resnet', arch=model, layer_name='layer4')]
+def grad_cam_gen(model, img, mixed_precision = False, cam_layer_name='conv_head', device = 'cuda'):     
+    configs = [dict(model_type='resnet', arch=model, layer_name=cam_layer_name)]
+    # configs = [dict(model_type='resnet', arch=model, cam_layer_name='layer4')]
     for config in configs:
         config['arch'].to(device).eval()
     # print(config['arch'])
@@ -74,7 +74,7 @@ def grad_cam_gen(model, img, mixed_precision = False, device = 'cuda'):
         return result_pp/np.max(result_pp)
 
 def plot_heatmap(model, path, valid_df, val_aug, crop=True, 
-ben_color=False, device='cuda', layer_name='conv_head', sz=384):
+ben_color=False, device='cuda', cam_layer_name='conv_head', sz=384):
     
     fig = plt.figure(figsize=(70, 56))
     valid_df['path'] = valid_df['image_id'].map(lambda x: x)
@@ -94,10 +94,11 @@ ben_color=False, device='cuda', layer_name='conv_head', sz=384):
             image = torch.FloatTensor(image)
             prediction = model(torch.unsqueeze(image.to(device), dim=0))
             prediction = prediction.data.cpu().numpy()
-            image = grad_cam_gen(model.backbone, torch.unsqueeze(image, dim=0).cuda(), layer_name=layer_name)
+            image = grad_cam_gen(model.model.backbone, torch.unsqueeze(image, dim=0).cuda(), cam_layer_name=cam_layer_name)
             image = (image-np.min(image))/(np.max(image)-np.min(image))
             plt.imshow(image)
-            ax.set_title('Label: %s Prediction: %s' % (row['diagnosis'], int(np.clip(np.round(np.ravel(prediction)[0]), 0, 4))))
+            ax.set_title('Label: %s Prediction: %s' % (row['diagnosis'], 
+            int(np.clip(np.round(np.ravel(prediction)[0]), 0, 4))), fontsize=40)
             plt.savefig('heatmap_0.png')
 
 def plot_confusion_matrix(predictions, actual_labels, labels):

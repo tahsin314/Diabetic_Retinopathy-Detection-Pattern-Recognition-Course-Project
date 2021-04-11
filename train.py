@@ -96,7 +96,6 @@ else:
 # model = Mixnet(pretrained_model, use_meta=use_meta, out_neurons=500, meta_neurons=250).to(device)
 # model = Hybrid().to(device)
 # base = torch.nn.DataParallel(base)
-# print(model.module.backbone.conv_head)
 wandb.watch(base)
 
 train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=train_aug)
@@ -128,7 +127,6 @@ plist = [
         # {'params': model.module.eff_attn.parameters(),  'lr': learning_rate}, 
         {'params': base.head.parameters(),  'lr': learning_rate},
         # {'params': model.module.output.parameters(), 'lr': learning_rate},
-        # {'params': model.module.output1.parameters(),  'lr': learning_rate},
     ]
 # optimizer = optim.AdamW(plist, lr=learning_rate)
 optimizer = Ralamb(plist, lr=learning_rate)
@@ -258,7 +256,7 @@ class LightningDR(pl.LightningModule):
     [wandb.Image(conf, caption="Confusion Matrix")]})
     return log_dict
 
-data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
+data_module = DRDataModule(valid_ds, valid_ds, test_ds, batch_size=batch_size)
 
 model = LightningDR(base, criterion, Ralamb, plist, batch_size, 
 lr_reduce_scheduler, num_class, target_type=target_type, learning_rate = learning_rate)
@@ -324,9 +322,8 @@ lr_scheduler=lr_reduce_scheduler, num_class=num_class, target_type=target_type, 
 trainer.test(model=model2, test_dataloaders=test_loader)
 
 # CAM Generation
-model_weight = torch.load(chk_path)['state_dict']
-base.load_state_dict(model_weight)
-plot_heatmap(base, image_path, test_df, val_aug, crop=crop, ben_color=ben_color, layer_name=layer_name, sz=sz)
+model2.eval()
+plot_heatmap(model2, image_path, test_df, val_aug, crop=crop, ben_color=ben_color, cam_layer_name=cam_layer_name, sz=sz)
 cam = cv2.imread('./heatmap_0.png', cv2.IMREAD_COLOR)
 cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
 wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})
