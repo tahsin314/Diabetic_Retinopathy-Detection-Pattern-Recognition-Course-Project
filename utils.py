@@ -73,7 +73,8 @@ def grad_cam_gen(model, img, mixed_precision = False, device = 'cuda'):
         result_pp = np.transpose(result_pp, (1,2,0))
         return result_pp/np.max(result_pp)
 
-def plot_heatmap(model, path, valid_df, val_aug, crop=True, ben_color=False, device='cuda', sz=384):
+def plot_heatmap(model, path, valid_df, val_aug, crop=True, 
+ben_color=False, device='cuda', layer_name='conv_head', sz=384):
     
     fig = plt.figure(figsize=(70, 56))
     valid_df['path'] = valid_df['image_id'].map(lambda x: x)
@@ -93,7 +94,7 @@ def plot_heatmap(model, path, valid_df, val_aug, crop=True, ben_color=False, dev
             image = torch.FloatTensor(image)
             prediction = model(torch.unsqueeze(image.to(device), dim=0))
             prediction = prediction.data.cpu().numpy()
-            image = grad_cam_gen(model.module.backbone, torch.unsqueeze(image, dim=0).cuda())
+            image = grad_cam_gen(model.backbone, torch.unsqueeze(image, dim=0).cuda(), layer_name=layer_name)
             image = (image-np.min(image))/(np.max(image)-np.min(image))
             plt.imshow(image)
             ax.set_title('Label: %s Prediction: %s' % (row['diagnosis'], int(np.clip(np.round(np.ravel(prediction)[0]), 0, 4))))

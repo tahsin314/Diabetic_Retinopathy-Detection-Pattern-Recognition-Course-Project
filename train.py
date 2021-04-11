@@ -95,9 +95,9 @@ else:
   base = Resnest(pretrained_model, num_class=num_class).to(device)
 # model = Mixnet(pretrained_model, use_meta=use_meta, out_neurons=500, meta_neurons=250).to(device)
 # model = Hybrid().to(device)
-base = torch.nn.DataParallel(base)
+# base = torch.nn.DataParallel(base)
 # print(model.module.backbone.conv_head)
-wandb.watch(base.module)
+wandb.watch(base)
 
 train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=train_aug)
 
@@ -118,7 +118,7 @@ test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_worke
 
 # Hybrid model
 plist = [ 
-        {'params': base.module.backbone.parameters(),  'lr': learning_rate/20},
+        {'params': base.backbone.parameters(),  'lr': learning_rate/20},
         # {'params': model.module.Attn_Resnest.resnest.parameters(),  'lr': learning_rate/100},
         # {'params': model.module.effnet.parameters(),  'lr': learning_rate/100},
         # {'params': model.module.attn1.parameters(), 'lr': learning_rate},
@@ -126,7 +126,7 @@ plist = [
         # {'params': model.module.head_res.parameters(), 'lr': learning_rate}, 
         # {'params': model.module.eff_conv.parameters(),  'lr': learning_rate}, 
         # {'params': model.module.eff_attn.parameters(),  'lr': learning_rate}, 
-        {'params': base.module.head.parameters(),  'lr': learning_rate},
+        {'params': base.head.parameters(),  'lr': learning_rate},
         # {'params': model.module.output.parameters(), 'lr': learning_rate},
         # {'params': model.module.output1.parameters(),  'lr': learning_rate},
     ]
@@ -308,9 +308,18 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
 # wandb.log({'Suggested LR': new_lr})
 # with experiment.record(name='sample', exp_conf=params, disable_screen=True):
         # trainer.fit(model, data_loader)
+wandb.log(params)
 trainer.fit(model, datamodule=data_module)
 chk_path = f"{model_dir}/{model_name}_loss.ckpt"
 model2 = LightningDR.load_from_checkpoint(chk_path, model=base, loss_fn=criterion, optim=Ralamb, plist=plist, batch_size=batch_size, 
 lr_scheduler=lr_reduce_scheduler, num_class=num_class, target_type=target_type, learning_rate = learning_rate)
 
 trainer.test(model=model2, test_dataloaders=test_loader)
+
+# CAM Generation
+model_weight = torch.load(chk_path)['state_dict']
+base.load_state_dict(model_weight)
+plot_heatmap(base, image_path, test_df, val_aug, crop=crop, ben_color=ben_color, layer_name=layer_name, sz=sz)
+cam = cv2.imread('./heatmap_0.png', cv2.IMREAD_COLOR)
+cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
+wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})

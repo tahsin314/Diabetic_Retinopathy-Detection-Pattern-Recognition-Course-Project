@@ -56,20 +56,3 @@ Efficientnet-B5 : 456
 Efficientnet-B6 : 528
 Efficientnet-B7 : 600
 ```
-### What worked for me:
-- Focal loss
-- Meta Data (I removed it in the final version to avoid overfitting)
-- Hair Augmentation
-- EfficientNet 
-- Resnest (Converges faster than EfficientNet)
-- Higher Image Dimensions
-- Progressive Resizing (It might have improved my score but I'm not so sure.)
-- Class Balanced Training
-- Visual Attention
-- TTA (ShiftScaleRotate, RandomSizedCrop, HueSaturationValue, HorizontalFlip, VerticalFlip)
-### What did not work for me:
-- Metric Loss (Converges Faster but unstable)
-- Microscope Augmentation
-- EfficientNet with Arcface
-- Freeze-Unfreeze Technique
-- Cutmix and Mixup (Does not improve score but helps prevent overfitting)
