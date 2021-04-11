@@ -6,8 +6,6 @@ This Repo contains my scripts for the [EEL 6825: Pattern Recogntion](http://www.
 - [Self-training with Noisy Student improves ImageNet classification](https://arxiv.org/pdf/1911.04252.pdf)
 
 ## Features
-- &#x2611; Meta Features
-
 - &#x2611; Balanced Sampler 
 
 - &#x2611; Mixed Precision
@@ -18,17 +16,13 @@ This Repo contains my scripts for the [EEL 6825: Pattern Recogntion](http://www.
 
 - &#x2611; Optimum Learning Rate Finder
 
-- &#x2611; ArcFace Loss
-
 - &#x2611; TTA 
 
 
 ## Resources
 - [Margin Focal Loss](https://www.kaggle.com/c/siim-isic-DR-classification/discussion/155201)
-- [Meta Features](https://www.kaggle.com/nroman/DR-pytorch-starter-efficientnet)
 - [1st place solution in ISIC 2019 challenge (w/code)](https://www.kaggle.com/c/siim-isic-DR-classification/discussion/154683)
 - [APTOS Gold Medal Solutions](https://www.kaggle.com/c/aptos2019-blindness-detection/discussion/108307): Although data type is different but it might be helpful.
-- [Rank then Blend](https://www.kaggle.com/ragnar123/rank-then-blend)
 - [DR Recognition via Visual Attention](https://github.com/SaoYan/IPMI2019-AttnMel)
 
 
@@ -41,12 +35,10 @@ This Repo contains my scripts for the [EEL 6825: Pattern Recogntion](http://www.
 - [Attention model](https://www.kaggle.com/c/siim-isic-DR-classification/discussion/171745) for feature extraction: Scoring `0.9287` with Resnet only. 
 
 ## How to run
-- Run `git clone https://github.com/tahsin314/DR_Classification_2020`
+- Run `git clone https://github.com/tahsin314/Diabetic_Retinopathy-Detection-Pattern-Recognition-Course-Project`
 - Download [this](https://www.kaggle.com/tahsin/DR-chris) dataset and extract the zip file.
-- In the `config.py` file change the `data_dir` variable to your data directory name.
+- In the `config.ini` file change the `data_dir` variable to your data directory name.
 - Run `conda env create -f environment.yml`
-- Activate the newly created conda environment.
-- Download `Hair Images` from [here](https://www.kaggle.com/nroman/DR-hairs) and put it into the `augmentations/images/` directory.
 - Run `train.py`. Change parameters according to your preferences from the `config.py` file before training.
 
 ### One important thing about EfficientNet
@@ -81,6 +73,3 @@ Efficientnet-B7 : 600
 - EfficientNet with Arcface
 - Freeze-Unfreeze Technique
 - Cutmix and Mixup (Does not improve score but helps prevent overfitting)
-
-### My Final Model
-My final model was a combination of `Fast Resnest` embedded with visual attention combined with `Efficientnet-B4`. 

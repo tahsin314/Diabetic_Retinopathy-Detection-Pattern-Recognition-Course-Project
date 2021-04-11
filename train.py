@@ -235,12 +235,20 @@ class LightningDR(pl.LightningModule):
     kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
     print(f'Epoch: {self.current_epoch} Loss : {avg_loss:.2f}, kappa: {kappa:.4f}')
     logs = {f'{mode}_loss': avg_loss, f'{mode}_kappa': kappa}
-    return {f'avg_{mode}_loss': avg_loss, 'log': logs}
+    return pr, la, {f'avg_{mode}_loss': avg_loss, 'log': logs}
 
   def validation_epoch_end(self, outputs):
-    return self.epoch_end('val', outputs)
+    _, _, log_dict = self.epoch_end('val', outputs)
+    return log_dict
 
   def test_epoch_end(self, outputs):
+    predictions, actual_labels, log_dict = self.epoch_end('test', outputs)
+    plot_confusion_matrix(predictions, actual_labels, 
+    [i for i in range(5)])
+    conf = cv2.imread('./conf_0.png', cv2.IMREAD_COLOR)
+    conf = cv2.cvtColor(conf, cv2.COLOR_BGR2RGB)
+    wandb.log({"Confusion Matrix": 
+    [wandb.Image(conf, caption="Confusion Matrix")]})
     return self.epoch_end('test', outputs)
 
 data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
