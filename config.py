@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from configparser import ConfigParser as cfg
 import cv2
 import pandas as pd
@@ -47,9 +47,13 @@ ben_color = bool(int(params['ben_color']))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mixed_precision = bool(int(params['mixed_precision']))
 use_meta = bool(int(params['use_meta']))
-pretrained_model = params['pretrained_model']
+model_list = ['gluon_resnet34_v1b', 'gluon_resnet50_v1b', 'gluon_resnet101_v1b', 
+'gluon_resnext101_64x4d', 'gluon_seresnext101_32x4d', 'gluon_resnext50_32x4d',
+'gluon_seresnext50_32x4d', 'resnest50d_1s4x24d', 'resnest101e', 'tf_efficientnet_b0',
+'tf_efficientnet_b1', 'tf_efficientnet_b2', 'tf_efficientnet_b3', 'tf_efficientnet_b4',
+'tf_efficientnet_b5']
+pretrained_model = [i for i in model_list if params['pretrained_model'] in i][0]
 model_name = f'{pretrained_model}_dim_{sz}_{target_type}'
-# model_name = 'efficientnet-b6_trial_stage1_fold_0'
 model_dir = params['model_dir']
 history_dir = params['history_dir']
 load_model = bool(int(params['load_model']))

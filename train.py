@@ -44,8 +44,6 @@ from model.seresnext import seresnext
 from model.effnet import EffNet
 from model.resnest import Resnest, Mixnet, Attn_Resnest
 from model.hybrid import Hybrid
-sys.path.insert(0, 'pytorch_lr_finder')
-from torch_lr_finder import LRFinder
 from over9000.over9000 import Over9000, Ralamb
 import wandb
 
@@ -245,7 +243,7 @@ class LightningDR(pl.LightningModule):
   def test_epoch_end(self, outputs):
     return self.epoch_end('test', outputs)
 
-data_module = DRDataModule(valid_ds, valid_ds, test_ds, batch_size=batch_size)
+data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
 
 model = LightningDR(base, criterion, Ralamb, plist, batch_size, 
 lr_reduce_scheduler, num_class, target_type=target_type, learning_rate = learning_rate)
