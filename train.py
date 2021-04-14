@@ -18,8 +18,7 @@ import pandas as pd
 import sklearn
 import cv2
 from tqdm import tqdm as T
-from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import cohen_kappa_score
+from sklearn.metrics import cohen_kappa_score, r2_score
 
 import torch, torchvision
 from torch import optim
@@ -39,58 +38,29 @@ from losses.arcface import ArcFaceLoss
 from losses.focal import criterion_margin_focal_binary_cross_entropy
 from losses.dice import HybridLoss
 from utils import *
-from optimizers import Over9000
+from data_processor import *
 from model.seresnext import seresnext
 from model.effnet import EffNet
 from model.resnest import Resnest, Mixnet, Attn_Resnest
 from model.hybrid import Hybrid
-from over9000.over9000 import Over9000, Ralamb
+from model.vit import ViT
+from optimizers.over9000 import Over9000, Ralamb
 import wandb
 
 seed_everything(SEED)
-
+os.system("rm -rf *.png")
 wandb_logger = WandbLogger(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
 wandb.init(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
 wandb.run.name= model_name
-m_p = mixed_precision
-if m_p:
-  scaler = torch.cuda.amp.GradScaler() 
+
 np.random.seed(SEED)
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(history_dir, exist_ok=True)
-skf = StratifiedKFold(n_splits=n_fold, shuffle=True, random_state=SEED)
-df = pd.read_csv(f'{data_dir}/trainLabels_cropped.csv')
-test_df = pd.read_csv(f'{data_dir}/train.csv')
 
-df['image_id'] = df['image'].map(lambda x: f"{image_path}/{x}.jpeg")
-df['diagnosis'] = df['level'].map(lambda x: x)
-df = df[['image_id', 'diagnosis']]
-df_messidor = Messidor_Process(f'{data_dir}/Messidor Dataset')
-df_idrid = IDRID_Process(data_dir)
-test_df['image_id'] = test_df['id_code'].map(lambda x: f"{test_image_path}/{x}.png")
-test_df['diagnosis'] = test_df['diagnosis'].map(lambda x: x)
-df = pd.concat([df_messidor, df, df_idrid], ignore_index=True)
-# Delete later
-# df = test_df
-df = df.sample(frac=1, random_state=SEED).reset_index(drop=True)
-df = df[['image_id', 'diagnosis']]
-df['fold'] = np.nan 
-X = df['image_id']
-y = df['diagnosis']
-train_idx = []
-val_idx = []
-for i, (train_index, val_index) in enumerate(skf.split(X, y)):
-    train_idx = train_index
-    val_idx = val_index
-    df.loc[val_idx, 'fold'] = i
-
-df['fold'] = df['fold'].astype('int')
-train_df = df[(df['fold']!=fold)]
-valid_df = df[df['fold']==fold]
-# test_df = df[df['fold']==n_fold-1]
-# print(len(train_df), len(valid_df), len(test_df))
 if 'eff' in model_name:
   base = EffNet(pretrained_model=pretrained_model, num_class=num_class, freeze_upto=freeze_upto).to(device)
+elif 'vit' in model_name:
+  base = ViT(pretrained_model, num_class=num_class) # Not Working 
 else:
   base = Resnest(pretrained_model, num_class=num_class).to(device)
 # model = Mixnet(pretrained_model, use_meta=use_meta, out_neurons=500, meta_neurons=250).to(device)
@@ -117,16 +87,13 @@ test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_worke
 
 # Hybrid model
 plist = [ 
-        {'params': base.backbone.parameters(),  'lr': learning_rate/20},
-        # {'params': model.module.Attn_Resnest.resnest.parameters(),  'lr': learning_rate/100},
-        # {'params': model.module.effnet.parameters(),  'lr': learning_rate/100},
-        # {'params': model.module.attn1.parameters(), 'lr': learning_rate},
-        # {'params': model.module.attn2.parameters(), 'lr': learning_rate},
-        # {'params': model.module.head_res.parameters(), 'lr': learning_rate}, 
-        # {'params': model.module.eff_conv.parameters(),  'lr': learning_rate}, 
-        # {'params': model.module.eff_attn.parameters(),  'lr': learning_rate}, 
-        {'params': base.head.parameters(),  'lr': learning_rate},
-        # {'params': model.module.output.parameters(), 'lr': learning_rate},
+        # {'params': base.backbone.parameters(),  'lr': learning_rate/20},
+        {'params': base.backbone.patch_embed.parameters(),  'lr': learning_rate/20},
+        {'params': base.backbone.pos_drop.parameters(),  'lr': learning_rate/20},
+        {'params': base.backbone.blocks.parameters(),  'lr': learning_rate/20},
+        {'params': base.backbone.norm.parameters(),  'lr': learning_rate/20},
+        {'params': base.backbone.head.parameters(),  'lr': learning_rate}
+        # {'params': base.head.parameters(),  'lr': learning_rate}
     ]
 # optimizer = optim.AdamW(plist, lr=learning_rate)
 optimizer = Ralamb(plist, lr=learning_rate)
@@ -141,7 +108,8 @@ else:
   criterion = criterion_margin_focal_binary_cross_entropy
 
 lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
-cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate], 
+cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate/20,
+learning_rate/20, learning_rate/20, learning_rate], 
 epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, 
 base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/20,  learning_rate], 
@@ -156,7 +124,7 @@ base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, l
 
 class LightningDR(pl.LightningModule):
   def __init__(self, model, loss_fn, optim, plist, 
-  batch_size, lr_scheduler, num_class=1, patience=3, factor=0.5,
+  batch_size, lr_scheduler, cyclic_scheduler, random_id, num_class=1, patience=3, factor=0.5,
   target_type='regression', learning_rate=1e-3):
       super().__init__()
       self.model = model
@@ -166,6 +134,8 @@ class LightningDR(pl.LightningModule):
       self.plist = plist 
       self.target_type= target_type
       self.lr_scheduler = lr_scheduler
+      self.cyclic_scheduler = cyclic_scheduler
+      self.random_id = random_id
       self.patience = patience
       self.factor = factor
       self.learning_rate = learning_rate
@@ -178,14 +148,13 @@ class LightningDR(pl.LightningModule):
         optimizer = self.optim(self.plist, self.learning_rate)
         lr_sc = self.lr_scheduler(optimizer, mode='min', factor=0.5, 
         patience=patience, verbose=True, threshold=1e-4, threshold_mode='rel', cooldown=0, min_lr=1e-7, eps=1e-08)
-        return {
+        return ({
        'optimizer': optimizer,
        'lr_scheduler': lr_sc,
-       'monitor': 'val_loss'
-   }
-  #  { 
-  #    'cyclic_scheduler': self.cyclic_scheduler,
-  #  })
+       'monitor': 'val_loss'}
+      #  {'cyclic_scheduler': self.cyclic_scheduler}
+        )
+
     
   def loss_func(self, logits, labels):
       return self.loss_fn(logits, labels)
@@ -214,16 +183,18 @@ class LightningDR(pl.LightningModule):
 
   def label_processor(self, probs, gt):
     if self.target_type == 'regression':
-      pr = np.round(probs.view(-1).detach().cpu().numpy())
+      raw_pr = probs.view(-1).detach().cpu().numpy()
+      pr = np.round(raw_pr)
       pr = np.clip(pr, 0, 4)
       la = gt.view(-1).cpu().numpy()
 
     if self.target_type == 'ordinal_regression':
+      raw_pr = (torch.sum((torch.sigmoid(probs)).float(), axis=1)-1).view(-1).detach().cpu().numpy()
       pr = torch.round(torch.sum((torch.sigmoid(probs)>0.5).float(), axis=1)-1).view(-1).detach().cpu().numpy()
       pr = np.clip(pr, 0, 4)
       la = torch.round(torch.sum(gt, axis=1)-1).view(-1).detach().cpu().numpy()
 
-    return pr, la
+    return raw_pr, pr, la
 
   def validation_step_end(self, outputs):
     avg_loss = outputs['val_loss']
@@ -236,10 +207,11 @@ class LightningDR(pl.LightningModule):
     avg_loss = torch.Tensor([out[f'{mode}_loss'] for out in outputs]).mean().numpy()
     probs = torch.cat([torch.tensor(out['probs']) for out in outputs], dim=0)
     gt = torch.cat([torch.tensor(out['gt']) for out in outputs], dim=0)
-    pr, la = self.label_processor(probs, torch.squeeze(gt))
+    raw_pr, pr, la = self.label_processor(probs, torch.squeeze(gt))
     kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
-    print(f'Epoch: {self.current_epoch} Loss : {avg_loss:.2f}, kappa: {kappa:.4f}')
-    logs = {f'{mode}_loss': avg_loss, f'{mode}_kappa': kappa}
+    r2 = r2_score(la, raw_pr)
+    print(f'Epoch: {self.current_epoch} Loss : {avg_loss:.2f}, kappa: {kappa:.4f}, R2: {r2}')
+    logs = {f'{mode}_loss': avg_loss, f'{mode}_kappa': kappa, f'{mode}_R2':r2}
     return pr, la, {f'avg_{mode}_loss': avg_loss, 'log': logs}
 
   def validation_epoch_end(self, outputs):
@@ -249,17 +221,17 @@ class LightningDR(pl.LightningModule):
   def test_epoch_end(self, outputs):
     predictions, actual_labels, log_dict = self.epoch_end('test', outputs)
     plot_confusion_matrix(predictions, actual_labels, 
-    [i for i in range(5)])
-    conf = cv2.imread('./conf_0.png', cv2.IMREAD_COLOR)
+    [i for i in range(5)], self.random_id)
+    conf = cv2.imread(f'./conf_{self.random_id}.png', cv2.IMREAD_COLOR)
     conf = cv2.cvtColor(conf, cv2.COLOR_BGR2RGB)
     wandb.log({"Confusion Matrix": 
     [wandb.Image(conf, caption="Confusion Matrix")]})
     return log_dict
 
-data_module = DRDataModule(valid_ds, valid_ds, test_ds, batch_size=batch_size)
+data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
 
 model = LightningDR(base, criterion, Ralamb, plist, batch_size, 
-lr_reduce_scheduler, num_class, target_type=target_type, learning_rate = learning_rate)
+lr_reduce_scheduler, cyclic_scheduler, num_class, target_type=target_type, learning_rate = learning_rate)
 checkpoint_callback1 = ModelCheckpoint(
     monitor='val_loss',
     dirpath='model_dir',
@@ -294,7 +266,7 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
 # # trainer.tune(model)
 # # Run learning rate finder
 # # print(model.learning_rate)
-# lr_finder = trainer.tuner.lr_find(model, train_loader, max_lr=50, num_training=200)
+# lr_finder = trainer.tuner.lr_find(model, train_loader, max_lr=50, num_training=500)
 
 # # Results can be found in
 # # print(lr_finder.results)
@@ -307,7 +279,7 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
 # # Pick point based on plot, or get suggestion
 # new_lr = lr_finder.suggestion()
 # print(f"Suggested LR: {new_lr}")
-# update hparams of the model
+# # update hparams of the model
 # model.hparams.lr = new_lr
 # model.learning_rate = new_lr
 # wandb.log({'Suggested LR': new_lr})
@@ -315,15 +287,15 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
         # trainer.fit(model, data_loader)
 wandb.log(params)
 trainer.fit(model, datamodule=data_module)
-chk_path = f"{model_dir}/{model_name}_loss.ckpt"
+chk_path = f"{model_dir}/{model_name}_loss-v1.ckpt"
 model2 = LightningDR.load_from_checkpoint(chk_path, model=base, loss_fn=criterion, optim=Ralamb, plist=plist, batch_size=batch_size, 
-lr_scheduler=lr_reduce_scheduler, num_class=num_class, target_type=target_type, learning_rate = learning_rate)
+lr_scheduler=lr_reduce_scheduler, cyclic_scheduler=cyclic_scheduler, num_class=num_class, target_type=target_type, learning_rate = learning_rate, random_id=random_id)
 
 trainer.test(model=model2, test_dataloaders=test_loader)
 
 # CAM Generation
-model2.eval()
-plot_heatmap(model2, image_path, test_df, val_aug, crop=crop, ben_color=ben_color, cam_layer_name=cam_layer_name, sz=sz)
-cam = cv2.imread('./heatmap_0.png', cv2.IMREAD_COLOR)
-cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
-wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})
+# model2.eval()
+# plot_heatmap(model2, image_path, test_df, val_aug, random_id=random_id, crop=crop, ben_color=ben_color, cam_layer_name=cam_layer_name, sz=sz)
+# cam = cv2.imread(f'./heatmap_{random_id}.png', cv2.IMREAD_COLOR)
+# cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
+# wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})

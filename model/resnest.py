@@ -63,7 +63,7 @@ class Attn_Resnest(nn.Module):
         self.maxpool = GeM()
         self.attn1 = AttentionBlock(256, 1024, 512, 4, normalize_attn=normalize_attn)
         self.attn2 = AttentionBlock(512, 1024, 512, 2, normalize_attn=normalize_attn)
-        self.output = nn.Sequential(nn.Linear(769, 128), nn.Linear(128, num_class))
+        self.output = nn.Sequential(nn.Linear(768+num_class, 128), nn.Linear(128, num_class))
         
     def forward(self, x):
         x = self.backbone.conv1(x)

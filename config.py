@@ -1,6 +1,7 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 from configparser import ConfigParser as cfg
+import string
 import cv2
 import pandas as pd
 import torch 
@@ -28,6 +29,7 @@ from albumentations import (
 
 dr_config = cfg()
 dr_config.read('dr_config.ini')
+random_id = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(10))
 params = dr_config['params']
 # for k, v in config['params'].items():print(k,v)
 n_fold = int(params['n_fold'])
@@ -51,7 +53,7 @@ model_list = ['gluon_resnet34_v1b', 'gluon_resnet50_v1b', 'gluon_resnet101_v1b',
 'gluon_resnext101_64x4d', 'gluon_seresnext101_32x4d', 'gluon_resnext50_32x4d',
 'gluon_seresnext50_32x4d', 'resnest50d_1s4x24d', 'resnest101e', 'tf_efficientnet_b0',
 'tf_efficientnet_b1', 'tf_efficientnet_b2', 'tf_efficientnet_b3', 'tf_efficientnet_b4',
-'tf_efficientnet_b5']
+'tf_efficientnet_b5', 'vit_base_patch16_384']
 pretrained_model = [i for i in model_list if params['pretrained_model'] in i][0]
 model_name = f'{pretrained_model}_dim_{sz}_{target_type}'
 model_dir = params['model_dir']
