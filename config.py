@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 from configparser import ConfigParser as cfg
 import string
 import cv2
@@ -53,9 +53,12 @@ model_list = ['gluon_resnet34_v1b', 'gluon_resnet50_v1b', 'gluon_resnet101_v1b',
 'gluon_resnext101_64x4d', 'gluon_seresnext101_32x4d', 'gluon_resnext50_32x4d',
 'gluon_seresnext50_32x4d', 'resnest50d_1s4x24d', 'resnest101e', 'tf_efficientnet_b0',
 'tf_efficientnet_b1', 'tf_efficientnet_b2', 'tf_efficientnet_b3', 'tf_efficientnet_b4',
-'tf_efficientnet_b5', 'vit_base_patch16_384']
+'tf_efficientnet_b5', 'vit_base_patch16_384', 'lambda_resnet50']
+model_type = params['model_type']
 pretrained_model = [i for i in model_list if params['pretrained_model'] in i][0]
 model_name = f'{pretrained_model}_dim_{sz}_{target_type}'
+if model_type is not 'Normal':
+    model_name = f'{model_type}_{pretrained_model}_dim_{sz}_{target_type}'
 model_dir = params['model_dir']
 history_dir = params['history_dir']
 load_model = bool(int(params['load_model']))

@@ -46,7 +46,7 @@ class Resnest(nn.Module):
         x = self.backbone.layer4(x)
         # x = self.backbone.avgpool(x)
         # x = self.out(x)
-        # print(x.size())
+        print(x.size())
         x = self.head(x)
         return x
 

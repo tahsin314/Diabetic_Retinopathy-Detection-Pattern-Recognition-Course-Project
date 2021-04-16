@@ -1,5 +1,5 @@
 import os
-
+import glob
 from matplotlib.pyplot import axis
 from config import *
 import shutil
@@ -33,7 +33,7 @@ from pytorch_lightning.loggers import WandbLogger
 # from labml.utils.lightening import LabMLLighteningLogger
 from DRDataset import DRDataset, DRDataModule
 from catalyst.data.sampler import BalanceClassSampler
-from losses.regression_loss import XSigmoidLoss
+from losses.regression_loss import *
 from losses.arcface import ArcFaceLoss
 from losses.focal import criterion_margin_focal_binary_cross_entropy
 from losses.dice import HybridLoss
@@ -44,6 +44,7 @@ from model.effnet import EffNet
 from model.resnest import Resnest, Mixnet, Attn_Resnest
 from model.hybrid import Hybrid
 from model.vit import ViT
+from model.botnet import BotNet
 from optimizers.over9000 import Over9000, Ralamb
 import wandb
 
@@ -62,9 +63,12 @@ if 'eff' in model_name:
 elif 'vit' in model_name:
   base = ViT(pretrained_model, num_class=num_class) # Not Working 
 else:
-  base = Resnest(pretrained_model, num_class=num_class).to(device)
-# model = Mixnet(pretrained_model, use_meta=use_meta, out_neurons=500, meta_neurons=250).to(device)
-# model = Hybrid().to(device)
+  if model_type == 'Normal':
+    base = Resnest(pretrained_model, num_class=num_class).to(device)
+  elif model_type == 'Attention':
+    base = Attn_Resnest(pretrained_model, num_class=num_class).to(device)
+  elif model_type == 'Bottleneck':
+    base = BotNet(pretrained_model, dim=sz, num_class=num_class).to(device)
 # base = torch.nn.DataParallel(base)
 wandb.watch(base)
 
@@ -87,29 +91,23 @@ test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_worke
 
 # Hybrid model
 plist = [ 
-        # {'params': base.backbone.parameters(),  'lr': learning_rate/20},
-        {'params': base.backbone.patch_embed.parameters(),  'lr': learning_rate/20},
-        {'params': base.backbone.pos_drop.parameters(),  'lr': learning_rate/20},
-        {'params': base.backbone.blocks.parameters(),  'lr': learning_rate/20},
-        {'params': base.backbone.norm.parameters(),  'lr': learning_rate/20},
-        {'params': base.backbone.head.parameters(),  'lr': learning_rate}
-        # {'params': base.head.parameters(),  'lr': learning_rate}
+        {'params': base.backbone.parameters(),  'lr': learning_rate/20},
+        {'params': base.head.parameters(),  'lr': learning_rate}
     ]
 # optimizer = optim.AdamW(plist, lr=learning_rate)
 optimizer = Ralamb(plist, lr=learning_rate)
 # nn.BCEWithLogitsLoss(), ArcFaceLoss(), FocalLoss(logits=True).to(device), LabelSmoothing().to(device) 
 # criterion = nn.BCEWithLogitsLoss(reduction='sum')
 if target_type == 'regression':
-  criterion = nn.MSELoss(reduction='mean')
-  # criterion = XSigmoidLoss()
+  # criterion = nn.MSELoss(reduction='mean')
+  criterion = hybrid_regression_loss
 else:
   # criterion = nn.MSELoss(reduction='mean')
   # criterion = nn.BCEWithLogitsLoss(reduction='sum')
   criterion = criterion_margin_focal_binary_cross_entropy
 
 lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
-cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate/20,
-learning_rate/20, learning_rate/20, learning_rate], 
+cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate], 
 epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, 
 base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/20,  learning_rate], 
@@ -154,8 +152,7 @@ class LightningDR(pl.LightningModule):
        'monitor': 'val_loss'}
       #  {'cyclic_scheduler': self.cyclic_scheduler}
         )
-
-    
+ 
   def loss_func(self, logits, labels):
       return self.loss_fn(logits, labels)
   
@@ -261,7 +258,7 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   benchmark=True,
                   # early_stop_callback=False,
                   progress_bar_refresh_rate=1, 
-                  callbacks=[checkpoint_callback1, checkpoint_callback1])
+                  callbacks=[checkpoint_callback1])
 # trainer.train_dataloader = data_module.train_dataloader
 # # trainer.tune(model)
 # # Run learning rate finder
@@ -287,7 +284,11 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
         # trainer.fit(model, data_loader)
 wandb.log(params)
 trainer.fit(model, datamodule=data_module)
-chk_path = f"{model_dir}/{model_name}_loss-v1.ckpt"
+chk_path = f"{model_dir}/{model_name}_loss-v"
+best_v = glob.glob(f'{chk_path}*')
+print(best_v)
+best_v = max([int(i.split('v')[-1].split('.')[0]) for i in best_v])
+chk_path = f"{chk_path}{best_v}"
 model2 = LightningDR.load_from_checkpoint(chk_path, model=base, loss_fn=criterion, optim=Ralamb, plist=plist, batch_size=batch_size, 
 lr_scheduler=lr_reduce_scheduler, cyclic_scheduler=cyclic_scheduler, num_class=num_class, target_type=target_type, learning_rate = learning_rate, random_id=random_id)
 
