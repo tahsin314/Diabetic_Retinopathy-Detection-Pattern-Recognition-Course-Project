@@ -26,7 +26,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset,DataLoader
 from torch.utils.data.distributed import DistributedSampler
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 # import labml
 # from labml import experiment
@@ -45,7 +45,7 @@ from model.resnest import Resnest, Mixnet, Attn_Resnest
 from model.hybrid import Hybrid
 from model.vit import ViT
 from model.botnet import BotNet
-from optimizers.over9000 import Over9000, Ralamb
+from optimizers.over9000 import AdamW, Over9000, Ralamb
 import wandb
 
 seed_everything(SEED)
@@ -94,13 +94,14 @@ plist = [
         {'params': base.backbone.parameters(),  'lr': learning_rate/20},
         {'params': base.head.parameters(),  'lr': learning_rate}
     ]
-# optimizer = optim.AdamW(plist, lr=learning_rate)
-optimizer = Ralamb(plist, lr=learning_rate)
+
+# optimizer = Ralamb(plist, lr=learning_rate)
+optimizer = AdamW(plist, lr=learning_rate)
 # nn.BCEWithLogitsLoss(), ArcFaceLoss(), FocalLoss(logits=True).to(device), LabelSmoothing().to(device) 
 # criterion = nn.BCEWithLogitsLoss(reduction='sum')
 if target_type == 'regression':
-  # criterion = nn.MSELoss(reduction='mean')
-  criterion = hybrid_regression_loss
+  criterion = nn.MSELoss(reduction='mean')
+  # criterion = hybrid_regression_loss
 else:
   # criterion = nn.MSELoss(reduction='mean')
   # criterion = nn.BCEWithLogitsLoss(reduction='sum')
@@ -149,8 +150,8 @@ class LightningDR(pl.LightningModule):
         return ({
        'optimizer': optimizer,
        'lr_scheduler': lr_sc,
-       'monitor': 'val_loss'}
-      #  {'cyclic_scheduler': self.cyclic_scheduler}
+       'monitor': 'val_loss',
+       'cyclic_scheduler': self.cyclic_scheduler}
         )
  
   def loss_func(self, logits, labels):
@@ -166,11 +167,11 @@ class LightningDR(pl.LightningModule):
   def training_step(self, train_batch, batch_idx):
     loss, _, _ = self.step(train_batch)
     self.log('train_loss', loss)
+    self.cyclic_scheduler.step()
     return loss
 
   def validation_step(self, val_batch, batch_idx):
       loss, logits, y = self.step(val_batch)
-      self.log('val_loss', loss)
       return {'val_loss':loss, 'probs':logits, 'gt':y}
 
   def test_step(self, test_batch, batch_idx):
@@ -201,14 +202,17 @@ class LightningDR(pl.LightningModule):
     return {'val_loss': avg_loss, 'probs': probs, 'gt':gt}
 
   def epoch_end(self, mode, outputs):
-    avg_loss = torch.Tensor([out[f'{mode}_loss'] for out in outputs]).mean().numpy()
+    avg_loss = torch.Tensor([out[f'{mode}_loss'] for out in outputs]).mean()
     probs = torch.cat([torch.tensor(out['probs']) for out in outputs], dim=0)
     gt = torch.cat([torch.tensor(out['gt']) for out in outputs], dim=0)
     raw_pr, pr, la = self.label_processor(probs, torch.squeeze(gt))
     kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
     r2 = r2_score(la, raw_pr)
-    print(f'Epoch: {self.current_epoch} Loss : {avg_loss:.2f}, kappa: {kappa:.4f}, R2: {r2}')
+    print(f'Epoch: {self.current_epoch} Loss : {avg_loss.numpy():.2f}, kappa: {kappa:.4f}, R2: {r2}')
     logs = {f'{mode}_loss': avg_loss, f'{mode}_kappa': kappa, f'{mode}_R2':r2}
+    self.log(f'{mode}_loss', avg_loss)
+    self.log( f'{mode}_kappa', kappa)
+    self.log(f'{mode}_R2',r2)
     return pr, la, {f'avg_{mode}_loss': avg_loss, 'log': logs}
 
   def validation_epoch_end(self, outputs):
@@ -244,6 +248,7 @@ checkpoint_callback2 = ModelCheckpoint(
     save_top_k=1,
     mode='max',
 )
+lr_monitor = LearningRateMonitor(logging_interval='step')
 
 trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Usually the auto is pretty bad. You should instead plot and pick manually.
                   gradient_clip_val=100,
@@ -254,13 +259,13 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   logger=wandb_logger,  # Comment that out to reactivate sanity but the ROC will fail if the sample has only class 0
                   checkpoint_callback=True,
                   gpus=1,
-                  auto_scale_batch_size=True,
+                  auto_scale_batch_size='power',
                   benchmark=True,
                   # early_stop_callback=False,
                   progress_bar_refresh_rate=1, 
-                  callbacks=[checkpoint_callback1])
-# trainer.train_dataloader = data_module.train_dataloader
-# # trainer.tune(model)
+                  callbacks=[checkpoint_callback1, checkpoint_callback2,
+                  lr_monitor])
+trainer.train_dataloader = data_module.train_dataloader
 # # Run learning rate finder
 # # print(model.learning_rate)
 # lr_finder = trainer.tuner.lr_find(model, train_loader, max_lr=50, num_training=500)
@@ -284,11 +289,11 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
         # trainer.fit(model, data_loader)
 wandb.log(params)
 trainer.fit(model, datamodule=data_module)
-chk_path = f"{model_dir}/{model_name}_loss-v"
-best_v = glob.glob(f'{chk_path}*')
-print(best_v)
-best_v = max([int(i.split('v')[-1].split('.')[0]) for i in best_v])
-chk_path = f"{chk_path}{best_v}"
+chk_path = f"{model_dir}/{model_name}_loss.ckpt"
+# best_v = glob.glob(f'{chk_path}*')
+# print(best_v)
+# best_v = max([int(i.split('v')[-1].split('.')[0]) for i in best_v])
+# chk_path = f"{chk_path}{best_v}"
 model2 = LightningDR.load_from_checkpoint(chk_path, model=base, loss_fn=criterion, optim=Ralamb, plist=plist, batch_size=batch_size, 
 lr_scheduler=lr_reduce_scheduler, cyclic_scheduler=cyclic_scheduler, num_class=num_class, target_type=target_type, learning_rate = learning_rate, random_id=random_id)
 
