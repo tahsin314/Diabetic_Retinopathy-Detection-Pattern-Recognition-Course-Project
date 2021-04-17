@@ -95,8 +95,8 @@ plist = [
         {'params': base.head.parameters(),  'lr': learning_rate}
     ]
 
-# optimizer = Ralamb(plist, lr=learning_rate)
-optimizer = AdamW(plist, lr=learning_rate)
+optimizer = Ralamb
+# optimizer = AdamW(plist, lr=learning_rate)
 # nn.BCEWithLogitsLoss(), ArcFaceLoss(), FocalLoss(logits=True).to(device), LabelSmoothing().to(device) 
 # criterion = nn.BCEWithLogitsLoss(reduction='sum')
 if target_type == 'regression':
@@ -108,7 +108,7 @@ else:
   criterion = criterion_margin_focal_binary_cross_entropy
 
 lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
-cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=[learning_rate/20, learning_rate], 
+cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer(plist, lr=learning_rate), max_lr=[learning_rate/20, learning_rate], 
 epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, 
 base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/20,  learning_rate], 
@@ -167,7 +167,8 @@ class LightningDR(pl.LightningModule):
   def training_step(self, train_batch, batch_idx):
     loss, _, _ = self.step(train_batch)
     self.log('train_loss', loss)
-    self.cyclic_scheduler.step()
+    if self.cyclic_scheduler:
+      self.cyclic_scheduler.step()
     return loss
 
   def validation_step(self, val_batch, batch_idx):
@@ -231,8 +232,8 @@ class LightningDR(pl.LightningModule):
 
 data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
 
-model = LightningDR(base, criterion, Ralamb, plist, batch_size, 
-lr_reduce_scheduler, cyclic_scheduler, num_class, target_type=target_type, learning_rate = learning_rate)
+model = LightningDR(base, criterion, optimizer, plist, batch_size, 
+lr_reduce_scheduler, None, num_class, target_type=target_type, learning_rate = learning_rate)
 checkpoint_callback1 = ModelCheckpoint(
     monitor='val_loss',
     dirpath='model_dir',
@@ -267,20 +268,22 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   lr_monitor])
 trainer.train_dataloader = data_module.train_dataloader
 # # Run learning rate finder
-# # print(model.learning_rate)
-# lr_finder = trainer.tuner.lr_find(model, train_loader, max_lr=50, num_training=500)
+lr_finder = trainer.tuner.lr_find(model, train_loader, max_lr=50, num_training=500)
 
-# # Results can be found in
-# # print(lr_finder.results)
+# Results can be found in
+# print(lr_finder.results)
 
-# # Plot with
-# fig = lr_finder.plot(suggest=True, show=True)
-# fig.savefig('lr_finder.png')
-# fig.show()
+# Plot with
+fig = lr_finder.plot(suggest=True, show=True)
+fig.savefig('lr_finder.png')
+fig.show()
+lr_img = cv2.imread('lr_finder.png', cv2.IMREAD_COLOR)
+lr_img = cv2.cvtColor(lr_img, cv2.COLOR_BGR2RGB)
+wandb.log({"LR Finder": [wandb.Image(lr_img, caption="Learning Rate Finder")]})
 
-# # Pick point based on plot, or get suggestion
-# new_lr = lr_finder.suggestion()
-# print(f"Suggested LR: {new_lr}")
+# Pick point based on plot, or get suggestion
+new_lr = lr_finder.suggestion()
+print(f"Suggested LR: {new_lr}")
 # # update hparams of the model
 # model.hparams.lr = new_lr
 # model.learning_rate = new_lr
@@ -288,20 +291,17 @@ trainer.train_dataloader = data_module.train_dataloader
 # with experiment.record(name='sample', exp_conf=params, disable_screen=True):
         # trainer.fit(model, data_loader)
 wandb.log(params)
+model.cyclic_scheduler = cyclic_scheduler
 trainer.fit(model, datamodule=data_module)
 chk_path = f"{model_dir}/{model_name}_loss.ckpt"
-# best_v = glob.glob(f'{chk_path}*')
-# print(best_v)
-# best_v = max([int(i.split('v')[-1].split('.')[0]) for i in best_v])
-# chk_path = f"{chk_path}{best_v}"
-model2 = LightningDR.load_from_checkpoint(chk_path, model=base, loss_fn=criterion, optim=Ralamb, plist=plist, batch_size=batch_size, 
+model2 = LightningDR.load_from_checkpoint(chk_path, model=base, loss_fn=criterion, optim=optimizer, plist=plist, batch_size=batch_size, 
 lr_scheduler=lr_reduce_scheduler, cyclic_scheduler=cyclic_scheduler, num_class=num_class, target_type=target_type, learning_rate = learning_rate, random_id=random_id)
 
 trainer.test(model=model2, test_dataloaders=test_loader)
 
 # CAM Generation
-# model2.eval()
-# plot_heatmap(model2, image_path, test_df, val_aug, random_id=random_id, crop=crop, ben_color=ben_color, cam_layer_name=cam_layer_name, sz=sz)
-# cam = cv2.imread(f'./heatmap_{random_id}.png', cv2.IMREAD_COLOR)
-# cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
-# wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})
+model2.eval()
+plot_heatmap(model2, image_path, test_df, val_aug, random_id=random_id, crop=crop, ben_color=ben_color, cam_layer_name=cam_layer_name, sz=sz)
+cam = cv2.imread(f'./heatmap_{random_id}.png', cv2.IMREAD_COLOR)
+cam = cv2.cvtColor(cam, cv2.COLOR_BGR2RGB)
+wandb.log({"CAM": [wandb.Image(cam, caption="Class Activation Mapping")]})
