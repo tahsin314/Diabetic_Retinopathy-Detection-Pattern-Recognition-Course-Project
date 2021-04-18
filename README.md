@@ -37,9 +37,9 @@ This Repo contains my scripts for the [EEL 6825: Pattern Recogntion](http://www.
 ## How to run
 - Run `git clone https://github.com/tahsin314/Diabetic_Retinopathy-Detection-Pattern-Recognition-Course-Project`
 - Download [this](https://www.kaggle.com/tahsin/DR-chris) dataset and extract the zip file.
-- In the `config.ini` file change the `data_dir` variable to your data directory name.
+- In the `dr_config.ini` file change the `data_dir` variable to your data directory name.
 - Run `conda env create -f environment.yml`
-- Run `train.py`. Change parameters according to your preferences from the `config.py` file before training.
+- Run `train.py`. Change parameters according to your preferences from the `dr_config.ini` file before training.
 
 ### One important thing about EfficientNet
 EfficientNet's are designed to take in to account input image dimensions.
@@ -56,3 +56,6 @@ Efficientnet-B5 : 456
 Efficientnet-B6 : 528
 Efficientnet-B7 : 600
 ```
+
+## Issues
+- Currently muli gpu training only works with `distributed_backend='dp'`. However, `Stochastic Weight Averaging` breaks it. Also, there are some issues with torch tensor dimension in the  `LightningDR` `epoch_end` function for multi-gpu validation and testing.

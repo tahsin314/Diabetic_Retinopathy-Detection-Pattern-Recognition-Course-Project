@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
 from configparser import ConfigParser as cfg
 import string
 import cv2
@@ -47,6 +47,7 @@ target_type = params['target_type']
 crop = bool(int(params['crop']))
 ben_color = bool(int(params['ben_color'])) 
 cam_layer_name = params['cam_layer_name']
+gpu_ids = [int(i) for i in params['gpu_ids'].split(',')]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mixed_precision = bool(int(params['mixed_precision']))
 model_list = ['gluon_resnet34_v1b', 'gluon_resnet50_v1b', 'gluon_resnet101_v1b', 

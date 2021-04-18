@@ -151,7 +151,7 @@ dependencies:
     - pytest==6.2.2
     - python-graphviz==0.16
     - pytorch-gradcam==0.2.1
-    - pytorch-lightning==1.2.7
+    - pytorch-lightning==1.2.8
     - pytorchcv==0.0.58
     - pytz==2021.1
     - pywavelets==1.1.1

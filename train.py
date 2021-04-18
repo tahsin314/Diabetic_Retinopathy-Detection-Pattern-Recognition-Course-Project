@@ -26,7 +26,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset,DataLoader
 from torch.utils.data.distributed import DistributedSampler
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, StochasticWeightAveraging
 from pytorch_lightning.loggers import WandbLogger
 # import labml
 # from labml import experiment
@@ -45,7 +45,7 @@ from model.resnest import Resnest, Mixnet, Attn_Resnest
 from model.hybrid import Hybrid
 from model.vit import ViT
 from model.botnet import BotNet
-from optimizers.over9000 import AdamW, Over9000, Ralamb
+from optimizers.over9000 import AdamW, Over9000, Ralamb, LookaheadAdam
 import wandb
 
 seed_everything(SEED)
@@ -95,7 +95,7 @@ plist = [
         {'params': base.head.parameters(),  'lr': learning_rate}
     ]
 
-optimizer = Ralamb
+optimizer = AdamW
 # optimizer = AdamW(plist, lr=learning_rate)
 # nn.BCEWithLogitsLoss(), ArcFaceLoss(), FocalLoss(logits=True).to(device), LabelSmoothing().to(device) 
 # criterion = nn.BCEWithLogitsLoss(reduction='sum')
@@ -108,17 +108,20 @@ else:
   criterion = criterion_margin_focal_binary_cross_entropy
 
 lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
-cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer(plist, lr=learning_rate), max_lr=[learning_rate/20, learning_rate], 
-epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, 
-base_momentum=0.85, max_momentum=0.95, div_factor=5.0, final_div_factor=100.0, last_epoch=-1)
-# cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/20,  learning_rate], 
-# max_lr=[learning_rate/10, 2*learning_rate], step_size_up=5*len(train_loader), 
-# step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
+# cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer(plist, lr=learning_rate), max_lr=[learning_rate/20, learning_rate], 
+# epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, 
+# base_momentum=0.85, max_momentum=0.95, div_factor=10.0, final_div_factor=20.0, last_epoch=-1)
+# cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer(plist, lr=learning_rate), base_lr=[learning_rate/80,  learning_rate/4], 
+# max_lr=[3*learning_rate/80, 3*learning_rate/4], step_size_up=5*len(train_loader), 
+# step_size_down=5*len(train_loader), mode='exp_range', gamma=1.0, scale_fn=None, scale_mode='cycle',
+#  cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
+# cyclic_scheduler = None
 # cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/250, learning_rate/10, 
 # learning_rate/10, learning_rate/10], max_lr=[learning_rate/25, learning_rate, learning_rate, learning_rate], 
 # step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, 
 # scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
-
+cyclic_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer(plist, lr=learning_rate), 
+5*len(train_loader), 2, learning_rate/5, -1)
 
 
 class LightningDR(pl.LightningModule):
@@ -141,7 +144,9 @@ class LightningDR(pl.LightningModule):
       self.batch_size = batch_size
   
   def forward(self, x):
-      return self.model(x)
+      out = self.model(x)
+      out = out.type_as(x)
+      return out
 
   def configure_optimizers(self):
         optimizer = self.optim(self.plist, self.learning_rate)
@@ -160,8 +165,8 @@ class LightningDR(pl.LightningModule):
   def step(self, batch):
     _, x, y = batch
     x, y = x.float(), y.float()
-    logits = self.forward(x)
-    loss = self.loss_func(torch.squeeze(logits), torch.squeeze(y))
+    logits = self.forward(x).type_as(x)
+    loss = self.loss_func(torch.squeeze(logits), torch.squeeze(y)).type_as(x)
     return loss, logits, y  
   
   def training_step(self, train_batch, batch_idx):
@@ -183,6 +188,7 @@ class LightningDR(pl.LightningModule):
   def label_processor(self, probs, gt):
     if self.target_type == 'regression':
       raw_pr = probs.view(-1).detach().cpu().numpy()
+      raw_pr = np.nan_to_num(raw_pr, nan=4.0, posinf=4.0)
       pr = np.round(raw_pr)
       pr = np.clip(pr, 0, 4)
       la = gt.view(-1).cpu().numpy()
@@ -203,13 +209,13 @@ class LightningDR(pl.LightningModule):
     return {'val_loss': avg_loss, 'probs': probs, 'gt':gt}
 
   def epoch_end(self, mode, outputs):
-    avg_loss = torch.Tensor([out[f'{mode}_loss'] for out in outputs]).mean()
+    avg_loss = torch.Tensor([out[f'{mode}_loss'].mean() for out in outputs]).mean()
     probs = torch.cat([torch.tensor(out['probs']) for out in outputs], dim=0)
     gt = torch.cat([torch.tensor(out['gt']) for out in outputs], dim=0)
     raw_pr, pr, la = self.label_processor(probs, torch.squeeze(gt))
     kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
     r2 = r2_score(la, raw_pr)
-    print(f'Epoch: {self.current_epoch} Loss : {avg_loss.numpy():.2f}, kappa: {kappa:.4f}, R2: {r2}')
+    print(f'Epoch: {self.current_epoch} Loss : {avg_loss.numpy():.2f}, kappa: {kappa:.4f}, R2: {r2:.4f}')
     logs = {f'{mode}_loss': avg_loss, f'{mode}_kappa': kappa, f'{mode}_R2':r2}
     self.log(f'{mode}_loss', avg_loss)
     self.log( f'{mode}_kappa', kappa)
@@ -230,10 +236,10 @@ class LightningDR(pl.LightningModule):
     [wandb.Image(conf, caption="Confusion Matrix")]})
     return log_dict
 
-data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
+data_module = DRDataModule(valid_ds, valid_ds, test_ds, batch_size=batch_size)
 
 model = LightningDR(base, criterion, optimizer, plist, batch_size, 
-lr_reduce_scheduler, None, num_class, target_type=target_type, learning_rate = learning_rate)
+lr_reduce_scheduler, cyclic_scheduler, num_class, target_type=target_type, learning_rate = learning_rate)
 checkpoint_callback1 = ModelCheckpoint(
     monitor='val_loss',
     dirpath='model_dir',
@@ -250,6 +256,7 @@ checkpoint_callback2 = ModelCheckpoint(
     mode='max',
 )
 lr_monitor = LearningRateMonitor(logging_interval='step')
+swa_callback =StochasticWeightAveraging()
 
 trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Usually the auto is pretty bad. You should instead plot and pick manually.
                   gradient_clip_val=100,
@@ -259,44 +266,50 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   accumulate_grad_batches = accum_step,
                   logger=wandb_logger,  # Comment that out to reactivate sanity but the ROC will fail if the sample has only class 0
                   checkpoint_callback=True,
-                  gpus=1,
+                  gpus=gpu_ids,
+                  stochastic_weight_avg=True,
                   auto_scale_batch_size='power',
                   benchmark=True,
+                  # distributed_backend='dp',
+                  # plugins='deepspeed',
                   # early_stop_callback=False,
                   progress_bar_refresh_rate=1, 
                   callbacks=[checkpoint_callback1, checkpoint_callback2,
-                  lr_monitor])
-trainer.train_dataloader = data_module.train_dataloader
-# # Run learning rate finder
-lr_finder = trainer.tuner.lr_find(model, train_loader, max_lr=50, num_training=500)
+                  lr_monitor, swa_callback])
+# trainer.train_dataloader = data_module.train_dataloader
+# Run learning rate finder
+# lr_finder = trainer.tuner.lr_find(model, train_loader, min_lr=1e-6, max_lr=100, num_training=500)
 
-# Results can be found in
-# print(lr_finder.results)
+# # Results can be found in
+# # print(lr_finder.results)
 
-# Plot with
-fig = lr_finder.plot(suggest=True, show=True)
-fig.savefig('lr_finder.png')
-fig.show()
-lr_img = cv2.imread('lr_finder.png', cv2.IMREAD_COLOR)
-lr_img = cv2.cvtColor(lr_img, cv2.COLOR_BGR2RGB)
-wandb.log({"LR Finder": [wandb.Image(lr_img, caption="Learning Rate Finder")]})
+# # Plot with
+# fig = lr_finder.plot(suggest=True, show=True)
+# fig.savefig('lr_finder.png')
+# fig.show()
+# lr_img = cv2.imread('lr_finder.png', cv2.IMREAD_COLOR)
+# lr_img = cv2.cvtColor(lr_img, cv2.COLOR_BGR2RGB)
+# wandb.log({"LR Finder": [wandb.Image(lr_img, caption="Learning Rate Finder")]})
 
-# Pick point based on plot, or get suggestion
-new_lr = lr_finder.suggestion()
-print(f"Suggested LR: {new_lr}")
-# # update hparams of the model
-# model.hparams.lr = new_lr
-# model.learning_rate = new_lr
-# wandb.log({'Suggested LR': new_lr})
-# with experiment.record(name='sample', exp_conf=params, disable_screen=True):
-        # trainer.fit(model, data_loader)
-wandb.log(params)
-model.cyclic_scheduler = cyclic_scheduler
+# # Pick point based on plot, or get suggestion
+# new_lr = lr_finder.suggestion()
+# print(f"Suggested LR: {new_lr}")
+# # # update hparams of the model
+# # model.hparams.lr = new_lr
+# # model.learning_rate = new_lr
+# # wandb.log({'Suggested LR': new_lr})
+# # with experiment.record(name='sample', exp_conf=params, disable_screen=True):
+#         # trainer.fit(model, data_loader)
+# wandb.log(params)
+# model.cyclic_scheduler = cyclic_scheduler
 trainer.fit(model, datamodule=data_module)
-chk_path = f"{model_dir}/{model_name}_loss.ckpt"
+try:
+  print(f"Best Model path: {checkpoint_callback1.best_model_path} Best Score: {checkpoint_callback1.best_model_score:.4f}")
+except:
+  pass
+chk_path = checkpoint_callback1.best_model_path
 model2 = LightningDR.load_from_checkpoint(chk_path, model=base, loss_fn=criterion, optim=optimizer, plist=plist, batch_size=batch_size, 
 lr_scheduler=lr_reduce_scheduler, cyclic_scheduler=cyclic_scheduler, num_class=num_class, target_type=target_type, learning_rate = learning_rate, random_id=random_id)
-
 trainer.test(model=model2, test_dataloaders=test_loader)
 
 # CAM Generation
