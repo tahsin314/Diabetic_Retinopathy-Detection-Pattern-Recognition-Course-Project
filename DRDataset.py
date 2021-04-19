@@ -89,16 +89,19 @@ class DRDataModule(pl.LightningDataModule):
 
     def train_dataloader(self):
         train_loader = DataLoader(self.train_ds,batch_size=self.batch_size, 
-        sampler=self.sampler, shuffle=self.shuffle, num_workers=self.num_workers, pin_memory=True)
+        sampler=self.sampler, shuffle=self.shuffle, drop_last=True,
+        num_workers=self.num_workers, pin_memory=True)
         return train_loader
 
     def val_dataloader(self):
-        val_loader = DataLoader(self.valid_ds,batch_size=self.batch_size, shuffle=self.shuffle,
+        val_loader = DataLoader(self.valid_ds,batch_size=self.batch_size, drop_last=True,
+        shuffle=self.shuffle,
          num_workers=self.num_workers, pin_memory=True)
         return val_loader
 
     def test_dataloader(self):
         test_loader = DataLoader(self.test_ds,batch_size=self.batch_size, 
-        shuffle=self.shuffle, num_workers=self.num_workers, pin_memory=True)
+        shuffle=self.shuffle, drop_last=True, num_workers=self.num_workers,
+         pin_memory=True)
         return test_loader
         

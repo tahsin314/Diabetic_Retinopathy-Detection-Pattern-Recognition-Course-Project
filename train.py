@@ -26,7 +26,8 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset,DataLoader
 from torch.utils.data.distributed import DistributedSampler
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, StochasticWeightAveraging
+from pytorch_lightning.callbacks import (ModelCheckpoint, 
+LearningRateMonitor, StochasticWeightAveraging,) 
 from pytorch_lightning.loggers import WandbLogger
 # import labml
 # from labml import experiment
@@ -165,8 +166,8 @@ class LightningDR(pl.LightningModule):
   def step(self, batch):
     _, x, y = batch
     x, y = x.float(), y.float()
-    logits = self.forward(x).type_as(x)
-    loss = self.loss_func(torch.squeeze(logits), torch.squeeze(y)).type_as(x)
+    logits = self.forward(x)
+    loss = self.loss_func(torch.squeeze(logits), torch.squeeze(y))
     return loss, logits, y  
   
   def training_step(self, train_batch, batch_idx):
@@ -190,8 +191,8 @@ class LightningDR(pl.LightningModule):
       raw_pr = probs.view(-1).detach().cpu().numpy()
       raw_pr = np.nan_to_num(raw_pr, nan=4.0, posinf=4.0)
       pr = np.round(raw_pr)
-      pr = np.clip(pr, 0, 4)
-      la = gt.view(-1).cpu().numpy()
+      pr = np.clip(pr, 0, 4).astype('int')
+      la = gt.view(-1).cpu().numpy().astype('int')
 
     if self.target_type == 'ordinal_regression':
       raw_pr = (torch.sum((torch.sigmoid(probs)).float(), axis=1)-1).view(-1).detach().cpu().numpy()
@@ -210,9 +211,9 @@ class LightningDR(pl.LightningModule):
 
   def epoch_end(self, mode, outputs):
     avg_loss = torch.Tensor([out[f'{mode}_loss'].mean() for out in outputs]).mean()
-    probs = torch.cat([torch.tensor(out['probs']) for out in outputs], dim=0)
-    gt = torch.cat([torch.tensor(out['gt']) for out in outputs], dim=0)
-    raw_pr, pr, la = self.label_processor(probs, torch.squeeze(gt))
+    probs = torch.stack([torch.tensor(out['probs']) for out in outputs], dim=0)
+    gt = torch.stack([torch.tensor(out['gt']) for out in outputs], dim=0)
+    raw_pr, pr, la = self.label_processor(torch.squeeze(probs), torch.squeeze(gt))
     kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
     r2 = r2_score(la, raw_pr)
     print(f'Epoch: {self.current_epoch} Loss : {avg_loss.numpy():.2f}, kappa: {kappa:.4f}, R2: {r2:.4f}')
@@ -227,6 +228,7 @@ class LightningDR(pl.LightningModule):
     return log_dict
 
   def test_epoch_end(self, outputs):
+    # self.model.eval()
     predictions, actual_labels, log_dict = self.epoch_end('test', outputs)
     plot_confusion_matrix(predictions, actual_labels, 
     [i for i in range(5)], self.random_id)
@@ -270,8 +272,8 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   stochastic_weight_avg=True,
                   auto_scale_batch_size='power',
                   benchmark=True,
-                  # distributed_backend='dp',
-                  # plugins='deepspeed',
+                  distributed_backend='dp',
+                  plugins='deepspeed',
                   # early_stop_callback=False,
                   progress_bar_refresh_rate=1, 
                   callbacks=[checkpoint_callback1, checkpoint_callback2,
