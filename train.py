@@ -238,7 +238,7 @@ class LightningDR(pl.LightningModule):
     [wandb.Image(conf, caption="Confusion Matrix")]})
     return log_dict
 
-data_module = DRDataModule(valid_ds, valid_ds, test_ds, batch_size=batch_size)
+data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
 
 model = LightningDR(base, criterion, optimizer, plist, batch_size, 
 lr_reduce_scheduler, cyclic_scheduler, num_class, target_type=target_type, learning_rate = learning_rate)
@@ -273,11 +273,11 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   auto_scale_batch_size='power',
                   benchmark=True,
                   distributed_backend='dp',
-                  plugins='deepspeed',
+                  # plugins='deepspeed', # Not working 
                   # early_stop_callback=False,
                   progress_bar_refresh_rate=1, 
                   callbacks=[checkpoint_callback1, checkpoint_callback2,
-                  lr_monitor, swa_callback])
+                  lr_monitor])
 # trainer.train_dataloader = data_module.train_dataloader
 # Run learning rate finder
 # lr_finder = trainer.tuner.lr_find(model, train_loader, min_lr=1e-6, max_lr=100, num_training=500)

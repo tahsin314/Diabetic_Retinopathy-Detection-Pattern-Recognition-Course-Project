@@ -52,7 +52,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mixed_precision = bool(int(params['mixed_precision']))
 model_list = ['gluon_resnet34_v1b', 'gluon_resnet50_v1b', 'gluon_resnet101_v1b', 
 'gluon_resnext101_64x4d', 'gluon_seresnext101_32x4d', 'gluon_resnext50_32x4d',
-'gluon_seresnext50_32x4d', 'resnest50d_1s4x24d', 'resnest101e', 'tf_efficientnet_b0',
+'gluon_seresnext50_32x4d', 'gluon_seresnext101_32x4d', 'resnest50d_1s4x24d', 'resnest101e', 'tf_efficientnet_b0',
 'tf_efficientnet_b1', 'tf_efficientnet_b2', 'tf_efficientnet_b3', 'tf_efficientnet_b4',
 'tf_efficientnet_b5', 'vit_base_patch16_384', 'lambda_resnet50']
 model_type = params['model_type']
