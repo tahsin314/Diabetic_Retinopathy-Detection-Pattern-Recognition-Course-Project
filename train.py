@@ -73,7 +73,8 @@ else:
 # base = torch.nn.DataParallel(base)
 wandb.watch(base)
 
-train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=train_aug)
+train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, 
+crop=crop, ben_color=ben_color, dim=sz, transforms=train_aug)
 
 if balanced_sampler:
   print('Using Balanced Sampler....')
@@ -87,7 +88,8 @@ valid_ds = DRDataset(valid_df.image_id.values, valid_df.diagnosis.values,
 target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=val_aug)
 valid_loader = DataLoader(valid_ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
-test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz, target_type=target_type, crop=crop, ben_color=ben_color, transforms=val_aug)
+test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz, 
+target_type=target_type, crop=crop, ben_color=ben_color, transforms=val_aug)
 test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
 # Hybrid model
@@ -179,11 +181,12 @@ class LightningDR(pl.LightningModule):
 
   def validation_step(self, val_batch, batch_idx):
       loss, logits, y = self.step(val_batch)
+      self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True) 
       return {'val_loss':loss, 'probs':logits, 'gt':y}
 
   def test_step(self, test_batch, batch_idx):
       loss, logits, y = self.step(test_batch)
-      self.log('test_loss', loss)
+      self.log('test_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
       return {'test_loss':loss, 'probs':logits, 'gt':y}
 
   def label_processor(self, probs, gt):
@@ -202,17 +205,21 @@ class LightningDR(pl.LightningModule):
 
     return raw_pr, pr, la
 
-  def validation_step_end(self, outputs):
-    avg_loss = outputs['val_loss']
-    probs = outputs['probs']
-    gt = outputs['gt']
-    val_logs = {'val_loss': avg_loss}
-    return {'val_loss': avg_loss, 'probs': probs, 'gt':gt}
+  def distributed_output(self, outputs):
+    if torch.distributed.is_initialized():
+      print('TORCH DP')
+      torch.distributed.barrier()
+      gather = [None] * torch.distributed.get_world_size()
+      torch.distributed.all_gather_object(gather, outputs)
+      outputs = [x for xs in gather for x in xs]
+    return outputs
 
   def epoch_end(self, mode, outputs):
+    outputs =self.distributed_output(outputs)
     avg_loss = torch.Tensor([out[f'{mode}_loss'].mean() for out in outputs]).mean()
-    probs = torch.stack([torch.tensor(out['probs']) for out in outputs], dim=0)
-    gt = torch.stack([torch.tensor(out['gt']) for out in outputs], dim=0)
+    print([torch.tensor(out['probs']).size() for out in outputs])
+    probs = torch.cat([torch.tensor(out['probs']).view(-1, 1) for out in outputs], dim=0)
+    gt = torch.cat([torch.tensor(out['gt']).view(-1, 1) for out in outputs], dim=0)
     raw_pr, pr, la = self.label_processor(torch.squeeze(probs), torch.squeeze(gt))
     kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
     r2 = r2_score(la, raw_pr)
@@ -220,7 +227,7 @@ class LightningDR(pl.LightningModule):
     logs = {f'{mode}_loss': avg_loss, f'{mode}_kappa': kappa, f'{mode}_R2':r2}
     self.log(f'{mode}_loss', avg_loss)
     self.log( f'{mode}_kappa', kappa)
-    self.log(f'{mode}_R2',r2)
+    self.log(f'{mode}_R2', r2)
     return pr, la, {f'avg_{mode}_loss': avg_loss, 'log': logs}
 
   def validation_epoch_end(self, outputs):
@@ -228,8 +235,8 @@ class LightningDR(pl.LightningModule):
     return log_dict
 
   def test_epoch_end(self, outputs):
-    # self.model.eval()
     predictions, actual_labels, log_dict = self.epoch_end('test', outputs)
+    print(predictions.shape, actual_labels.shape)
     plot_confusion_matrix(predictions, actual_labels, 
     [i for i in range(5)], self.random_id)
     conf = cv2.imread(f'./conf_{self.random_id}.png', cv2.IMREAD_COLOR)
@@ -266,13 +273,13 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   profiler="simple",
                   weights_summary='top',
                   accumulate_grad_batches = accum_step,
-                  logger=wandb_logger,  # Comment that out to reactivate sanity but the ROC will fail if the sample has only class 0
+                  logger=wandb_logger, 
                   checkpoint_callback=True,
-                  gpus=gpu_ids,
-                  stochastic_weight_avg=True,
+                  gpus=gpu_ids, num_processes=4,
+                  stochastic_weight_avg=False,
                   auto_scale_batch_size='power',
                   benchmark=True,
-                  distributed_backend='dp',
+                  # distributed_backend='dp',
                   # plugins='deepspeed', # Not working 
                   # early_stop_callback=False,
                   progress_bar_refresh_rate=1, 
@@ -310,8 +317,11 @@ try:
 except:
   pass
 chk_path = checkpoint_callback1.best_model_path
-model2 = LightningDR.load_from_checkpoint(chk_path, model=base, loss_fn=criterion, optim=optimizer, plist=plist, batch_size=batch_size, 
-lr_scheduler=lr_reduce_scheduler, cyclic_scheduler=cyclic_scheduler, num_class=num_class, target_type=target_type, learning_rate = learning_rate, random_id=random_id)
+model2 = LightningDR.load_from_checkpoint(chk_path, model=base, loss_fn=criterion, optim=optimizer,
+ plist=plist, batch_size=batch_size, 
+lr_scheduler=lr_reduce_scheduler, cyclic_scheduler=cyclic_scheduler, 
+num_class=num_class, target_type=target_type, learning_rate = learning_rate, random_id=random_id)
+
 trainer.test(model=model2, test_dataloaders=test_loader)
 
 # CAM Generation

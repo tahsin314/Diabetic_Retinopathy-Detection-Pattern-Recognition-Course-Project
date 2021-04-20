@@ -58,4 +58,7 @@ Efficientnet-B7 : 600
 ```
 
 ## Issues
-- Currently muli gpu training only works with `distributed_backend='dp'`. However, `Stochastic Weight Averaging` breaks it. Also, there are some issues with torch tensor dimension in the  `LightningDR` `epoch_end` function for multi-gpu validation and testing.
+- Currently muli gpu training only works with `distributed_backend='dp'`. However, `Stochastic Weight Averaging` breaks it. 
+- `distributed_backend='dp'` also fails to gather data from multiple GPUs and returns predictions and labels with shape `(batch_num, )` where ot is supposed to return data with shape `(num_samples, )` (`num_samples ≈ num_batches * batch_size`). This is probably a *pytorch-lightning* bug. It is advised to comment out `distributed_backend='dp'` and training on single GPU at this moment. 
+
+**Alternative:** Try running inference on test data on single GPU or set `batch_size=1` during test.
