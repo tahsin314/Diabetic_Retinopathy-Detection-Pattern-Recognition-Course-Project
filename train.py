@@ -242,7 +242,6 @@ class LightningDR(pl.LightningModule):
 
   def test_epoch_end(self, outputs):
     predictions, actual_labels, log_dict = self.epoch_end('test', outputs)
-    print(predictions.shape, actual_labels.shape)
     plot_confusion_matrix(predictions, actual_labels, 
     [i for i in range(5)], self.random_id)
     conf = cv2.imread(f'./conf_{self.random_id}.png', cv2.IMREAD_COLOR)
@@ -281,8 +280,8 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   accumulate_grad_batches = accum_step,
                   logger=wandb_logger, 
                   checkpoint_callback=True,
-                  gpus=gpu_ids, num_processes=4,
-                  stochastic_weight_avg=False,
+                  gpus=gpu_ids, num_processes=4*len(gpu_ids),
+                  stochastic_weight_avg=True,
                   auto_scale_batch_size='power',
                   benchmark=True,
                   distributed_backend='dp',

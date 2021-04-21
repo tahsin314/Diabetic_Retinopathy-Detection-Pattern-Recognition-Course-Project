@@ -1,4 +1,4 @@
-## Diabetic Retinopathy Detection 
+# Diabetic Retinopathy Detection 
 This Repo contains my scripts for the [EEL 6825: Pattern Recogntion](http://www.wu.ece.ufl.edu/courses/eel6825s21/) Spring 2021 Course.
 
 ## Papers
@@ -55,8 +55,8 @@ Efficientnet-B7 : 600
 
 ## Issues
 - Currently muli gpu training only works with `distributed_backend='dp'`. However, `Stochastic Weight Averaging` breaks it. 
-- `distributed_backend='dp'` also fails to gather data from multiple GPUs and returns predictions and labels with shape `(batch_num, )` where ot is supposed to return data with shape `(num_samples, )` (`num_samples ≈ num_batches * batch_size`). This is probably a *pytorch-lightning* bug. It is advised to comment out `distributed_backend='dp'` and training on single GPU at this moment. 
+- `distributed_backend='dp'` also fails to gather data from multiple GPUs and returns predictions and labels with shape `(batch_num, )` where it is supposed to return data with shape `(num_samples, )` (`num_samples ≈ num_batches * batch_size`). This is probably a *pytorch-lightning* bug. It is advised to comment out `distributed_backend='dp'` and training on single GPU at this moment. 
 
 **Alternative:** Try running inference on test data on single GPU or set `batch_size=1` during test.
 ### Update [20/04/2021]
-Added an ugly hack for gathering predictions and labels with `distributed_backend='dp'`. Now data can be gathered from multiple GPUs. Hope that `Pytorch-Lightning` will fix their `gather` issue.
+Added an ugly hack for gathering predictions and labels with `distributed_backend='dp'`. Now data can be gathered from multiple GPUs. Hope that *pytorch-Lightning* will fix their `gather` issue.

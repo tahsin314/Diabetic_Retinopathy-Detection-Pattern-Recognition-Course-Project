@@ -190,7 +190,7 @@ dependencies:
     - torchvision==0.9.1
     - triton==1.0.0.dev20210330
     - utilitys==0.2.0
-    - wandb==0.10.26
+    - wandb==0.10.27
     - werkzeug==1.0.1
     - wheel==0.36.2
     - xmltodict==0.12.0
