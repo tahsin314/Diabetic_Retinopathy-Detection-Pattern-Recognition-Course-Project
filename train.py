@@ -42,7 +42,7 @@ from utils import *
 from data_processor import *
 from model.seresnext import seresnext
 from model.effnet import EffNet
-from model.resnest import Resnest, Mixnet, Attn_Resnest
+from model.resnest import Resne_t, Mixnet, TripleAttentionResne_t, AttentionResne_t
 from model.hybrid import Hybrid
 from model.vit import ViT
 from model.botnet import BotNet
@@ -65,11 +65,14 @@ elif 'vit' in model_name:
   base = ViT(pretrained_model, num_class=num_class) # Not Working 
 else:
   if model_type == 'Normal':
-    base = Resnest(pretrained_model, num_class=num_class).to(device)
+    base = Resne_t(pretrained_model, num_class=num_class).to(device)
   elif model_type == 'Attention':
-    base = Attn_Resnest(pretrained_model, num_class=num_class).to(device)
+    base = AttentionResne_t(pretrained_model, num_class=num_class).to(device)
   elif model_type == 'Bottleneck':
     base = BotNet(pretrained_model, dim=sz, num_class=num_class).to(device)
+  elif model_type == 'TripleAttention':
+    base = TripleAttentionResne_t(pretrained_model, num_class=num_class).to(device)
+
 # base = torch.nn.DataParallel(base)
 wandb.watch(base)
 
@@ -92,14 +95,17 @@ test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz,
 target_type=target_type, crop=crop, ben_color=ben_color, transforms=val_aug)
 test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_workers=4)
 
-# Hybrid model
 plist = [ 
         {'params': base.backbone.parameters(),  'lr': learning_rate/20},
         {'params': base.head.parameters(),  'lr': learning_rate}
     ]
+if model_type == 'TripleAttention':
+  plist += [{'params': base.ta1.parameters(),  'lr': learning_rate}, 
+  {'params': base.ta2.parameters(),  'lr': learning_rate},
+  {'params': base.ta3.parameters(),  'lr': learning_rate},
+  {'params': base.ta4.parameters(),  'lr': learning_rate}]
 
 optimizer = AdamW
-# optimizer = AdamW(plist, lr=learning_rate)
 # nn.BCEWithLogitsLoss(), ArcFaceLoss(), FocalLoss(logits=True).to(device), LabelSmoothing().to(device) 
 # criterion = nn.BCEWithLogitsLoss(reduction='sum')
 if target_type == 'regression':
