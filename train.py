@@ -145,6 +145,7 @@ class LightningDR(pl.LightningModule):
       self.factor = factor
       self.learning_rate = learning_rate
       self.batch_size = batch_size
+      self.epoch_end_output = [] # Ugly hack for gathering results from multiple GPUs
   
   def forward(self, x):
       out = self.model(x)
@@ -182,12 +183,16 @@ class LightningDR(pl.LightningModule):
   def validation_step(self, val_batch, batch_idx):
       loss, logits, y = self.step(val_batch)
       self.log('val_loss', loss, on_step=True, on_epoch=True, sync_dist=True) 
-      return {'val_loss':loss, 'probs':logits, 'gt':y}
+      val_log = {'val_loss':loss, 'probs':logits, 'gt':y}
+      self.epoch_end_output.append({k:v.cpu() for k,v in val_log.items()})
+      return val_log
 
   def test_step(self, test_batch, batch_idx):
       loss, logits, y = self.step(test_batch)
       self.log('test_loss', loss, on_step=True, on_epoch=True, sync_dist=True)
-      return {'test_loss':loss, 'probs':logits, 'gt':y}
+      test_log = {'test_loss':loss, 'probs':logits, 'gt':y}
+      self.epoch_end_output.append({k:v.cpu() for k,v in test_log.items()})
+      return test_log
 
   def label_processor(self, probs, gt):
     if self.target_type == 'regression':
@@ -215,9 +220,8 @@ class LightningDR(pl.LightningModule):
     return outputs
 
   def epoch_end(self, mode, outputs):
-    outputs =self.distributed_output(outputs)
+    outputs = self.epoch_end_output
     avg_loss = torch.Tensor([out[f'{mode}_loss'].mean() for out in outputs]).mean()
-    print([torch.tensor(out['probs']).size() for out in outputs])
     probs = torch.cat([torch.tensor(out['probs']).view(-1, 1) for out in outputs], dim=0)
     gt = torch.cat([torch.tensor(out['gt']).view(-1, 1) for out in outputs], dim=0)
     raw_pr, pr, la = self.label_processor(torch.squeeze(probs), torch.squeeze(gt))
@@ -228,10 +232,12 @@ class LightningDR(pl.LightningModule):
     self.log(f'{mode}_loss', avg_loss)
     self.log( f'{mode}_kappa', kappa)
     self.log(f'{mode}_R2', r2)
+    self.epoch_end_output = []
     return pr, la, {f'avg_{mode}_loss': avg_loss, 'log': logs}
 
   def validation_epoch_end(self, outputs):
     _, _, log_dict = self.epoch_end('val', outputs)
+    self.epoch_end_output = []
     return log_dict
 
   def test_epoch_end(self, outputs):
@@ -279,7 +285,7 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   stochastic_weight_avg=False,
                   auto_scale_batch_size='power',
                   benchmark=True,
-                  # distributed_backend='dp',
+                  distributed_backend='dp',
                   # plugins='deepspeed', # Not working 
                   # early_stop_callback=False,
                   progress_bar_refresh_rate=1, 
