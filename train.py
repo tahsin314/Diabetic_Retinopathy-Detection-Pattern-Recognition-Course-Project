@@ -106,36 +106,21 @@ if model_type == 'TripleAttention':
   {'params': base.ta4.parameters(),  'lr': learning_rate}]
 
 optimizer = AdamW
-# nn.BCEWithLogitsLoss(), ArcFaceLoss(), FocalLoss(logits=True).to(device), LabelSmoothing().to(device) 
-# criterion = nn.BCEWithLogitsLoss(reduction='sum')
 if target_type == 'regression':
   criterion = nn.MSELoss(reduction='mean')
   # criterion = hybrid_regression_loss
 else:
-  # criterion = nn.MSELoss(reduction='mean')
   # criterion = nn.BCEWithLogitsLoss(reduction='sum')
   criterion = criterion_margin_focal_binary_cross_entropy
 
 lr_reduce_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
-# cyclic_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer(plist, lr=learning_rate), max_lr=[learning_rate/20, learning_rate], 
-# epochs=n_epochs, steps_per_epoch=len(train_loader), pct_start=0.7, anneal_strategy='cos', cycle_momentum=True, 
-# base_momentum=0.85, max_momentum=0.95, div_factor=10.0, final_div_factor=20.0, last_epoch=-1)
-# cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer(plist, lr=learning_rate), base_lr=[learning_rate/80,  learning_rate/4], 
-# max_lr=[3*learning_rate/80, 3*learning_rate/4], step_size_up=5*len(train_loader), 
-# step_size_down=5*len(train_loader), mode='exp_range', gamma=1.0, scale_fn=None, scale_mode='cycle',
-#  cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
-# cyclic_scheduler = None
-# cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=[learning_rate/250, learning_rate/10, 
-# learning_rate/10, learning_rate/10], max_lr=[learning_rate/25, learning_rate, learning_rate, learning_rate], 
-# step_size_up=5*len(train_loader), step_size_down=5*len(train_loader), mode='triangular', gamma=1.0, 
-# scale_fn=None, scale_mode='cycle', cycle_momentum=False, base_momentum=0.8, max_momentum=0.9, last_epoch=-1)
 cyclic_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer(plist, lr=learning_rate), 
 5*len(train_loader), 2, learning_rate/5, -1)
 
 
 class LightningDR(pl.LightningModule):
   def __init__(self, model, loss_fn, optim, plist, 
-  batch_size, lr_scheduler, cyclic_scheduler, random_id, num_class=1, patience=3, factor=0.5,
+  batch_size, lr_scheduler, random_id, cyclic_scheduler=None, num_class=1, patience=3, factor=0.5,
   target_type='regression', learning_rate=1e-3):
       super().__init__()
       self.model = model
@@ -182,7 +167,7 @@ class LightningDR(pl.LightningModule):
   def training_step(self, train_batch, batch_idx):
     loss, _, _ = self.step(train_batch)
     self.log('train_loss', loss)
-    if self.cyclic_scheduler:
+    if self.cyclic_scheduler is not None:
       self.cyclic_scheduler.step()
     return loss
 
@@ -259,7 +244,7 @@ class LightningDR(pl.LightningModule):
 data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
 
 model = LightningDR(base, criterion, optimizer, plist, batch_size, 
-lr_reduce_scheduler, cyclic_scheduler, num_class, target_type=target_type, learning_rate = learning_rate)
+lr_reduce_scheduler,num_class, cyclic_scheduler, target_type=target_type, learning_rate = learning_rate)
 checkpoint_callback1 = ModelCheckpoint(
     monitor='val_loss',
     dirpath='model_dir',
@@ -320,8 +305,7 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
 # # wandb.log({'Suggested LR': new_lr})
 # # with experiment.record(name='sample', exp_conf=params, disable_screen=True):
 #         # trainer.fit(model, data_loader)
-# wandb.log(params)
-# model.cyclic_scheduler = cyclic_scheduler
+wandb.log(params)
 trainer.fit(model, datamodule=data_module)
 try:
   print(f"Best Model path: {checkpoint_callback1.best_model_path} Best Score: {checkpoint_callback1.best_model_score:.4f}")

@@ -5,6 +5,7 @@ This Repo contains my scripts for the [EEL 6825: Pattern Recogntion](http://www.
 - [Skin lesion classification with ensemble of squeeze-and-excitation networks and semi-supervised learning](https://arxiv.org/abs/1809.02568)
 - [Self-training with Noisy Student improves ImageNet classification](https://arxiv.org/pdf/1911.04252.pdf)
 - [Bottleneck Transformers for Visual Recognition](https://arxiv.org/pdf/2101.11605.pdf)
+- [Rotate to Attend: Convolutional Triplet Attention Module](https://arxiv.org/pdf/2010.03045.pdf)
 
 ## Features
 - &#x2611; Balanced Sampler 
