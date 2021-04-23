@@ -3,24 +3,15 @@ import glob
 from matplotlib.pyplot import axis
 from config import *
 import shutil
-import sys
 import warnings
-# warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore")
-import threading
-import curses 
-import gc
-import time
-from random import choices
-from itertools import chain
 import numpy as np
 import pandas as pd
-import sklearn
 import cv2
 from tqdm import tqdm as T
 from sklearn.metrics import cohen_kappa_score, r2_score
 
-import torch, torchvision
+import torch
 from torch import optim
 from torch.nn import functional as F
 from torch.utils.data import Dataset,DataLoader
@@ -35,18 +26,15 @@ from pytorch_lightning.loggers import WandbLogger
 from DRDataset import DRDataset, DRDataModule
 from catalyst.data.sampler import BalanceClassSampler
 from losses.regression_loss import *
-from losses.arcface import ArcFaceLoss
 from losses.focal import criterion_margin_focal_binary_cross_entropy
-from losses.dice import HybridLoss
 from utils import *
 from data_processor import *
-from model.seresnext import seresnext
 from model.effnet import EffNet
-from model.resnest import Resne_t, Mixnet, TripleAttentionResne_t, AttentionResne_t
+from model.resnest import Resne_t, TripleAttentionResne_t, AttentionResne_t
 from model.hybrid import Hybrid
 from model.vit import ViT
 from model.botnet import BotNet
-from optimizers.over9000 import AdamW, Over9000, Ralamb, LookaheadAdam
+from optimizers.over9000 import AdamW, Ralamb
 import wandb
 
 seed_everything(SEED)
@@ -73,7 +61,6 @@ else:
   elif model_type == 'TripleAttention':
     base = TripleAttentionResne_t(pretrained_model, num_class=num_class).to(device)
 
-# base = torch.nn.DataParallel(base)
 wandb.watch(base)
 
 train_ds = DRDataset(train_df.image_id.values, train_df.diagnosis.values, target_type=target_type, 

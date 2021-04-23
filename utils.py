@@ -3,20 +3,13 @@ from config import *
 import random
 import numpy as np
 import cv2
-import pandas as pd 
 import torch
-import torch.nn as nn
 from torch.nn import functional as F
 from torch.autograd import Variable
-import albumentations
-from albumentations.core.transforms_interface import DualTransform
-from albumentations.augmentations import functional as F_alb
-import itertools
 from sklearn.metrics import confusion_matrix
 from matplotlib import pyplot as plt
 import seaborn as sns
-from gradcam import GradCAM, GradCAMpp
-# from gradcam.utils import visualize_cam
+from gradcam.gradcam import GradCAM, GradCAMpp
 
 
 def seed_everything(seed):
