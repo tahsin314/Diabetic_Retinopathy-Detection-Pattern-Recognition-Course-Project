@@ -20,9 +20,9 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import (ModelCheckpoint, 
 LearningRateMonitor, StochasticWeightAveraging,) 
 from pytorch_lightning.loggers import WandbLogger
-# import labml
-# from labml import experiment
-# from labml.utils.lightening import LabMLLighteningLogger
+import labml
+from labml import experiment
+from labml.utils.lightning import LabMLLightningLogger
 from DRDataset import DRDataset, DRDataModule
 from catalyst.data.sampler import BalanceClassSampler
 from losses.regression_loss import *
@@ -30,7 +30,7 @@ from losses.focal import criterion_margin_focal_binary_cross_entropy
 from utils import *
 from data_processor import *
 from model.effnet import EffNet
-from model.resnest import Resne_t, TripleAttentionResne_t, AttentionResne_t
+from model.resne_t import Resne_t, TripletAttentionResne_t, AttentionResne_t, CBtAttentionResne_t
 from model.hybrid import Hybrid
 from model.vit import ViT
 from model.botnet import BotNet
@@ -59,7 +59,9 @@ else:
   elif model_type == 'Bottleneck':
     base = BotNet(pretrained_model, dim=sz, num_class=num_class).to(device)
   elif model_type == 'TripleAttention':
-    base = TripleAttentionResne_t(pretrained_model, num_class=num_class).to(device)
+    base = TripletAttentionResne_t(pretrained_model, num_class=num_class).to(device)
+  elif model_type == 'CBAttention':
+    base = CBtAttentionResne_t(pretrained_model, num_class=num_class).to(device)
 
 wandb.watch(base)
 
@@ -86,16 +88,18 @@ plist = [
         {'params': base.backbone.parameters(),  'lr': learning_rate/20},
         {'params': base.head.parameters(),  'lr': learning_rate}
     ]
-if model_type == 'TripleAttention':
-  plist += [{'params': base.ta1.parameters(),  'lr': learning_rate}, 
-  {'params': base.ta2.parameters(),  'lr': learning_rate},
-  {'params': base.ta3.parameters(),  'lr': learning_rate},
-  {'params': base.ta4.parameters(),  'lr': learning_rate}]
+if model_type == 'TripleAttention' or model_type == 'CBAttention':
+  plist += [{'params': base.at1.parameters(),  'lr': learning_rate}, 
+  {'params': base.at2.parameters(),  'lr': learning_rate},
+  {'params': base.at3.parameters(),  'lr': learning_rate},
+  {'params': base.at4.parameters(),  'lr': learning_rate}]
 
 optimizer = AdamW
 if target_type == 'regression':
   criterion = nn.MSELoss(reduction='mean')
   # criterion = hybrid_regression_loss
+elif target_type == 'classification':
+  criterion = nn.BCEWithLogitsLoss(reduction='sum')
 else:
   # criterion = nn.BCEWithLogitsLoss(reduction='sum')
   criterion = criterion_margin_focal_binary_cross_entropy
@@ -179,6 +183,12 @@ class LightningDR(pl.LightningModule):
       pr = np.round(raw_pr)
       pr = np.clip(pr, 0, 4).astype('int')
       la = gt.view(-1).cpu().numpy().astype('int')
+    
+    if self.target_type == 'classification':
+      raw_pr = (torch.argmax((torch.sigmoid(probs)).float(), axis=1)).view(-1).detach().cpu().numpy()
+      pr = raw_pr
+      pr = np.clip(pr, 0, 4)
+      la = torch.argmax(gt, axis=1).view(-1).detach().cpu().numpy()
 
     if self.target_type == 'ordinal_regression':
       raw_pr = (torch.sum((torch.sigmoid(probs)).float(), axis=1)-1).view(-1).detach().cpu().numpy()
@@ -256,7 +266,7 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   profiler="simple",
                   weights_summary='top',
                   accumulate_grad_batches = accum_step,
-                  logger=wandb_logger, 
+                  logger=[wandb_logger, LabMLLightningLogger()], 
                   checkpoint_callback=True,
                   gpus=gpu_ids, num_processes=4*len(gpu_ids),
                   stochastic_weight_avg=True,
@@ -293,7 +303,8 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
 # # with experiment.record(name='sample', exp_conf=params, disable_screen=True):
 #         # trainer.fit(model, data_loader)
 wandb.log(params)
-trainer.fit(model, datamodule=data_module)
+with experiment.record(name='sample', exp_conf=dict(params), disable_screen=True, token='ae914b4ab3de48eb84b3a4a757c928b9'):
+  trainer.fit(model, datamodule=data_module)
 try:
   print(f"Best Model path: {checkpoint_callback1.best_model_path} Best Score: {checkpoint_callback1.best_model_score:.4f}")
 except:

@@ -19,11 +19,6 @@ from utils import *
 import warnings
 warnings.filterwarnings('ignore')
 
-def onehot(size, target):
-    vec = torch.zeros(size, dtype=torch.float32)
-    vec[target.astype('int')] = 1.
-    return vec
-
 class DRDataset(Dataset):
     def __init__(self, image_ids, labels=None, dim=256, target_type='regression', crop = False, ben_color=False, transforms=None):
         super().__init__()
@@ -60,9 +55,14 @@ class DRDataset(Dataset):
     def __len__(self):
         return len(self.image_ids)
     
+    def onehot(self, target):
+        vec = torch.zeros(self.dim, dtype=torch.float32)
+        vec[target.astype('int')] = 1.
+        return vec
+    
     def target_processor(self, target):
         if self.target_type == 'regression': return target
-        elif self.target_type == 'classification': return one_hot(5, target)
+        elif self.target_type == 'classification': return self.onehot(5, target)
         elif self.target_type == 'ordinal_regression':
             tmp = np.zeros((1, 5))
             for i in range(target+1):

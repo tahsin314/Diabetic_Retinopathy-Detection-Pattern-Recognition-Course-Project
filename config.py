@@ -13,7 +13,6 @@ from augmentations.microscope import MicroscopeAlbumentations
 from augmentations.color_constancy import ColorConstancy
 from losses.arcface import ArcFaceLoss
 from losses.focal import criterion_margin_focal_binary_cross_entropy
-from model.seresnext import seresnext
 from model.effnet import EffNet
 from utils import *
 from albumentations.augmentations.transforms import Equalize, Posterize, Downscale, Rotate 
