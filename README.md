@@ -14,13 +14,9 @@ This Repo contains my scripts for the [EEL 6825: Pattern Recogntion](http://www.
 
 - &#x2611; Gradient Accumulation  
 
-- &#x2611; Model freeze-unfreeze
-
-- &#x2611; Optimum Learning Rate Finder
+- &#x2611; Optimum Learning Rate Finder [LR Finder Suggestion is terrible. I just observed the learning rate at which loss starts to diverge and set `learning_rate = learning rate at diverging loss/100`. No particular intention behind it.] 
 
 - &#x2611; TTA 
-
-
 ## Resources
 - [Margin Focal Loss](https://www.kaggle.com/c/siim-isic-DR-classification/discussion/155201)
 - [APTOS Gold Medal Solutions](https://www.kaggle.com/c/aptos2019-blindness-detection/discussion/108307): Although data type is different but it might be helpful.

@@ -40,9 +40,12 @@ import wandb
 
 seed_everything(SEED)
 os.system("rm -rf *.png")
-wandb_logger = WandbLogger(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
-wandb.init(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
-wandb.run.name= model_name
+if mode == 'lr_finder':
+  wandb.init(mode="disabled")
+else:
+  wandb_logger = WandbLogger(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
+  wandb.init(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
+  wandb.run.name= model_name
 
 np.random.seed(SEED)
 os.makedirs(model_dir, exist_ok=True)
@@ -59,7 +62,7 @@ else:
     base = AttentionResne_t(pretrained_model, num_class=num_class).to(device)
   elif model_type == 'Bottleneck':
     base = BotResne_t(pretrained_model, dim=sz, num_class=num_class).to(device)
-  elif model_type == 'TripleAttention':
+  elif model_type == 'TripletAttention':
     base = TripletAttentionResne_t(pretrained_model, num_class=num_class).to(device)
   elif model_type == 'CBAttention':
     base = CBAttentionResne_t(pretrained_model, num_class=num_class).to(device)
@@ -79,17 +82,17 @@ else:
 
 valid_ds = DRDataset(valid_df.image_id.values, valid_df.diagnosis.values, 
 target_type=target_type, crop=crop, ben_color=ben_color, dim=sz, transforms=val_aug)
-valid_loader = DataLoader(valid_ds, batch_size=batch_size, shuffle=True, num_workers=4)
+valid_loader = DataLoader(valid_ds, batch_size=batch_size, shuffle=False, num_workers=4)
 
 test_ds = DRDataset(test_df.image_id.values, test_df.diagnosis.values, dim=sz, 
 target_type=target_type, crop=crop, ben_color=ben_color, transforms=val_aug)
-test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True, num_workers=4)
+test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=4)
 
 plist = [ 
-        {'params': base.backbone.parameters(),  'lr': learning_rate/20},
+        {'params': base.backbone.parameters(),  'lr': learning_rate/10},
         {'params': base.head.parameters(),  'lr': learning_rate}
     ]
-if model_type == 'TripleAttention' or model_type == 'CBAttention':
+if model_type == 'TriplettAttention':
   plist += [{'params': base.at1.parameters(),  'lr': learning_rate}, 
   {'params': base.at2.parameters(),  'lr': learning_rate},
   {'params': base.at3.parameters(),  'lr': learning_rate},
@@ -243,7 +246,7 @@ class LightningDR(pl.LightningModule):
     return log_dict
 
 data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
-
+if mode == 'lr_finder': cyclic_scheduler = None
 model = LightningDR(base, criterion, optimizer, plist, batch_size, 
 lr_reduce_scheduler,num_class, cyclic_scheduler=cyclic_scheduler, target_type=target_type, learning_rate = learning_rate)
 checkpoint_callback1 = ModelCheckpoint(
@@ -265,7 +268,7 @@ lr_monitor = LearningRateMonitor(logging_interval='step')
 swa_callback =StochasticWeightAveraging()
 
 trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Usually the auto is pretty bad. You should instead plot and pick manually.
-                  gradient_clip_val=100,
+                  gradient_clip_val=20,
                   num_sanity_val_steps=10,
                   profiler="simple",
                   weights_summary='top',
@@ -282,28 +285,19 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   progress_bar_refresh_rate=1, 
                   callbacks=[checkpoint_callback1, checkpoint_callback2,
                   lr_monitor])
-# trainer.train_dataloader = data_module.train_dataloader
-# Run learning rate finder
-# lr_finder = trainer.tuner.lr_find(model, train_loader, min_lr=1e-6, max_lr=100, num_training=500)
 
-# # Results can be found in
-# # print(lr_finder.results)
-
-# # Plot with
-# fig = lr_finder.plot(suggest=True, show=True)
-# fig.savefig('lr_finder.png')
-# fig.show()
-# lr_img = cv2.imread('lr_finder.png', cv2.IMREAD_COLOR)
-# lr_img = cv2.cvtColor(lr_img, cv2.COLOR_BGR2RGB)
-# wandb.log({"LR Finder": [wandb.Image(lr_img, caption="Learning Rate Finder")]})
-
-# # Pick point based on plot, or get suggestion
-# new_lr = lr_finder.suggestion()
-# print(f"Suggested LR: {new_lr}")
-# # # update hparams of the model
-# # model.hparams.lr = new_lr
-# # model.learning_rate = new_lr
-# # wandb.log({'Suggested LR': new_lr})
+if mode == 'lr_finder':
+  trainer.train_dataloader = data_module.train_dataloader
+  # Run learning rate finder
+  lr_finder = trainer.tuner.lr_find(model, train_loader, min_lr=1e-6, max_lr=100, num_training=500)
+  # Plot with
+  fig = lr_finder.plot(suggest=True, show=True)
+  fig.savefig('lr_finder.png')
+  fig.show()
+# Pick point based on plot, or get suggestion
+  new_lr = lr_finder.suggestion()
+  print(f"Suggested LR: {new_lr}")
+  exit()
 
 wandb.log(params)
 with experiment.record(name=model_name, exp_conf=dict(params), disable_screen=True, token='ae914b4ab3de48eb84b3a4a757c928b9'):

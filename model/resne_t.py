@@ -117,18 +117,21 @@ class CBAttentionResne_t(nn.Module):
     def __init__(self, model_name='resnest50_fast_1s1x64d', num_class=1):
         super().__init__()
         self.backbone = timm.create_model(model_name, pretrained=True)
-        self.gate_channels1 = self.backbone.layer1[-1].conv3.out_channels
-        self.gate_channels2 = self.backbone.layer2[-1].conv3.out_channels
-        self.gate_channels3 = self.backbone.layer3[-1].conv3.out_channels
-        self.gate_channels4 = self.backbone.layer4[-1].conv3.out_channels
         self.in_features = self.backbone.fc.in_features
         self.relu = Mish()
         self.maxpool = GeM()
-        self.at1 = CBAM(self.gate_channels1)
-        self.at2 = CBAM(self.gate_channels2)
-        self.at3 = CBAM(self.gate_channels3)
-        self.at4 = CBAM(self.gate_channels4)
         self.head = Head(self.in_features, num_class, activation='mish')
+        self.to_CBAM(self.backbone.layer1)
+        self.to_CBAM(self.backbone.layer2)
+        self.to_CBAM(self.backbone.layer3)
+        self.to_CBAM(self.backbone.layer4)
+
+    def to_CBAM(self, module):
+        for i in range(len(module)): 
+            dim1 = module[i].conv1.out_channels
+            dim2 = module[i].conv2.out_channels
+            module[i].conv1.add_module('cbam1', CBAM(dim1))
+            module[i].conv2.add_module('cbam2', CBAM(dim2))
         
     def forward(self, x):
         x = self.backbone.conv1(x)
@@ -137,13 +140,9 @@ class CBAttentionResne_t(nn.Module):
         x = self.backbone.maxpool(x)
 
         layer1 = self.backbone.layer1(x)
-        layer1 = self.at1(layer1)
         layer2 = self.backbone.layer2(layer1)
-        layer2 = self.at2(layer2)
         layer3 = self.backbone.layer3(layer2)
-        layer3 = self.at3(layer3)
         layer4 = self.backbone.layer4(layer3)
-        layer4 = self.at4(layer4)
         out = self.head(layer4)
         return out
 

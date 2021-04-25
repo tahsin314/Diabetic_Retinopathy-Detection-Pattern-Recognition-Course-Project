@@ -49,6 +49,7 @@ cam_layer_name = params['cam_layer_name']
 gpu_ids = [int(i) for i in params['gpu_ids'].split(',')]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 mixed_precision = bool(int(params['mixed_precision']))
+mode = params['mode']
 model_list = ['gluon_resnet34_v1b', 'gluon_resnet50_v1b', 'gluon_resnet101_v1b', 
 'gluon_resnext101_64x4d', 'gluon_seresnext101_32x4d', 'gluon_resnext50_32x4d',
 'gluon_seresnext50_32x4d', 'gluon_seresnext101_32x4d', 'resnest50d_1s4x24d', 'resnest101e', 'tf_efficientnet_b0',
