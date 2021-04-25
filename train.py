@@ -30,10 +30,11 @@ from losses.focal import criterion_margin_focal_binary_cross_entropy
 from utils import *
 from data_processor import *
 from model.effnet import EffNet
-from model.resne_t import Resne_t, TripletAttentionResne_t, AttentionResne_t, CBtAttentionResne_t
+from model.resne_t import (Resne_t, 
+TripletAttentionResne_t, AttentionResne_t, 
+CBAttentionResne_t, BotResne_t)
 from model.hybrid import Hybrid
 from model.vit import ViT
-from model.botnet import BotNet
 from optimizers.over9000 import AdamW, Ralamb
 import wandb
 
@@ -57,11 +58,11 @@ else:
   elif model_type == 'Attention':
     base = AttentionResne_t(pretrained_model, num_class=num_class).to(device)
   elif model_type == 'Bottleneck':
-    base = BotNet(pretrained_model, dim=sz, num_class=num_class).to(device)
+    base = BotResne_t(pretrained_model, dim=sz, num_class=num_class).to(device)
   elif model_type == 'TripleAttention':
     base = TripletAttentionResne_t(pretrained_model, num_class=num_class).to(device)
   elif model_type == 'CBAttention':
-    base = CBtAttentionResne_t(pretrained_model, num_class=num_class).to(device)
+    base = CBAttentionResne_t(pretrained_model, num_class=num_class).to(device)
 
 wandb.watch(base)
 
@@ -111,7 +112,8 @@ cyclic_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimize
 
 class LightningDR(pl.LightningModule):
   def __init__(self, model, loss_fn, optim, plist, 
-  batch_size, lr_scheduler, random_id, cyclic_scheduler=None, num_class=1, patience=3, factor=0.5,
+  batch_size, lr_scheduler, random_id, distributed_backend='dp',
+  cyclic_scheduler=None, num_class=1, patience=3, factor=0.5,
   target_type='regression', learning_rate=1e-3):
       super().__init__()
       self.model = model
@@ -123,6 +125,7 @@ class LightningDR(pl.LightningModule):
       self.lr_scheduler = lr_scheduler
       self.cyclic_scheduler = cyclic_scheduler
       self.random_id = random_id
+      self.distributed_backend = distributed_backend
       self.patience = patience
       self.factor = factor
       self.learning_rate = learning_rate
@@ -208,7 +211,8 @@ class LightningDR(pl.LightningModule):
     return outputs
 
   def epoch_end(self, mode, outputs):
-    outputs = self.epoch_end_output
+    if distributed_backend:
+      outputs = self.epoch_end_output
     avg_loss = torch.Tensor([out[f'{mode}_loss'].mean() for out in outputs]).mean()
     probs = torch.cat([torch.tensor(out['probs']).view(-1, 1) for out in outputs], dim=0)
     gt = torch.cat([torch.tensor(out['gt']).view(-1, 1) for out in outputs], dim=0)
@@ -241,7 +245,7 @@ class LightningDR(pl.LightningModule):
 data_module = DRDataModule(train_ds, valid_ds, test_ds, batch_size=batch_size)
 
 model = LightningDR(base, criterion, optimizer, plist, batch_size, 
-lr_reduce_scheduler,num_class, cyclic_scheduler, target_type=target_type, learning_rate = learning_rate)
+lr_reduce_scheduler,num_class, cyclic_scheduler=cyclic_scheduler, target_type=target_type, learning_rate = learning_rate)
 checkpoint_callback1 = ModelCheckpoint(
     monitor='val_loss',
     dirpath='model_dir',
@@ -272,7 +276,7 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
                   stochastic_weight_avg=True,
                   auto_scale_batch_size='power',
                   benchmark=True,
-                  distributed_backend='dp',
+                  distributed_backend=distributed_backend,
                   # plugins='deepspeed', # Not working 
                   # early_stop_callback=False,
                   progress_bar_refresh_rate=1, 
@@ -300,10 +304,9 @@ trainer = pl.Trainer(max_epochs=n_epochs, precision=16, auto_lr_find=True,  # Us
 # # model.hparams.lr = new_lr
 # # model.learning_rate = new_lr
 # # wandb.log({'Suggested LR': new_lr})
-# # with experiment.record(name='sample', exp_conf=params, disable_screen=True):
-#         # trainer.fit(model, data_loader)
+
 wandb.log(params)
-with experiment.record(name='sample', exp_conf=dict(params), disable_screen=True, token='ae914b4ab3de48eb84b3a4a757c928b9'):
+with experiment.record(name=model_name, exp_conf=dict(params), disable_screen=True, token='ae914b4ab3de48eb84b3a4a757c928b9'):
   trainer.fit(model, datamodule=data_module)
 try:
   print(f"Best Model path: {checkpoint_callback1.best_model_path} Best Score: {checkpoint_callback1.best_model_score:.4f}")

@@ -97,7 +97,7 @@ def to_Mish(model):
         #     setattr(model, child_name, Mish())
         else:
             to_Mish(child)
-
+            
 def to_GeM(model):
     for child_name, child in model.named_children():
         if isinstance(child, nn.ReLU):

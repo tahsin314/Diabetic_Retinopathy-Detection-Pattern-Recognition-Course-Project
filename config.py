@@ -62,6 +62,7 @@ if model_type is not 'Normal':
 model_dir = params['model_dir']
 history_dir = params['history_dir']
 load_model = bool(int(params['load_model']))
+distributed_backend = params['distributed_backend']
 freeze_upto = int(params['freeze_upto']) # Freezes upto bottom n_blocks
 if load_model and os.path.exists(os.path.join(history_dir, f'history_{model_name}.csv')):
     history = pd.read_csv(os.path.join(history_dir, f'history_{model_name}.csv'))

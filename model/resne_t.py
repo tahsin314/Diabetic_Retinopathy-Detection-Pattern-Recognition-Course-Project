@@ -13,6 +13,7 @@ from typing import Optional
 from .utils import *
 from .triplet_attention import *
 from .cbam import *
+from .botnet import *
 from losses.arcface import ArcMarginProduct
         
 import timm
@@ -111,7 +112,7 @@ class TripletAttentionResne_t(nn.Module):
         out = self.head(layer4)
         return out
 
-class CBtAttentionResne_t(nn.Module):
+class CBAttentionResne_t(nn.Module):
 
     def __init__(self, model_name='resnest50_fast_1s1x64d', num_class=1):
         super().__init__()
@@ -146,6 +147,39 @@ class CBtAttentionResne_t(nn.Module):
         out = self.head(layer4)
         return out
 
+class BotResne_t(nn.Module):
+
+    def __init__(self, model_name='resnest50_fast_1s1x64d', dim=320, num_class=1):
+        super().__init__()
+        self.backbone = timm.create_model(model_name, pretrained=True)
+        self.dim = dim
+        self.in_features = self.backbone.fc.in_features
+        self.relu = Mish()
+        self.maxpool = GeM()
+
+        self.head = Head(self.in_features, num_class, activation='mish')
+        # self.to_MHSA(self.backbone.layer1, 4)
+        self.to_MHSA(self.backbone.layer2, 8)
+        self.to_MHSA(self.backbone.layer3, 16)
+        self.to_MHSA(self.backbone.layer4, 32)
+    
+    def to_MHSA(self, module, factor):
+        dim = module[-1].conv2.out_channels 
+        module[-1].conv2 = MHSA(dim, self.dim//factor, self.dim//factor)
+
+        
+    def forward(self, x):
+        x = self.backbone.conv1(x)
+        x = self.backbone.bn1(x)
+        x = self.backbone.act1(x)
+        x = self.backbone.maxpool(x)
+
+        layer1 = self.backbone.layer1(x)
+        layer2 = self.backbone.layer2(layer1)
+        layer3 = self.backbone.layer3(layer2)
+        layer4 = self.backbone.layer4(layer3)
+        out = self.head(layer4)
+        return out
 class Mixnet(nn.Module):
 
     def __init__(self, model_name='mixnet_xxl', use_meta=True, out_neurons=600, meta_neurons=150):
