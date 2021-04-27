@@ -42,6 +42,7 @@ seed_everything(SEED)
 os.system("rm -rf *.png")
 if mode == 'lr_finder':
   wandb.init(mode="disabled")
+  wandb_logger = WandbLogger(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
 else:
   wandb_logger = WandbLogger(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
   wandb.init(project="Diabetic_Retinopathy", config=params, settings=wandb.Settings(start_method='fork'))
