@@ -64,7 +64,6 @@ model_dir = params['model_dir']
 history_dir = params['history_dir']
 load_model = bool(int(params['load_model']))
 distributed_backend = params['distributed_backend']
-freeze_upto = int(params['freeze_upto']) # Freezes upto bottom n_blocks
 if load_model and os.path.exists(os.path.join(history_dir, f'history_{model_name}.csv')):
     history = pd.read_csv(os.path.join(history_dir, f'history_{model_name}.csv'))
 else:
@@ -74,8 +73,6 @@ imagenet_stats = params['imagenet_stats']
 n_epochs = int(params['n_epochs'])
 TTA = int(params['TTA'])
 balanced_sampler = bool(int(params['balanced_sampler']))
-pseudo_lo_thr = float(params['pseudo_lo_thr'])
-pseudo_up_thr = float(params['pseudo_up_thr'])
 
 train_aug = Compose([
   ShiftScaleRotate(p=0.9,rotate_limit=360, border_mode= cv2.BORDER_CONSTANT, value=[0, 0, 0], scale_limit=0.25),

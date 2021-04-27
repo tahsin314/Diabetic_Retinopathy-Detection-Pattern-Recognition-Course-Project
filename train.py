@@ -104,7 +104,7 @@ if target_type == 'regression':
   criterion = nn.MSELoss(reduction='mean')
   # criterion = hybrid_regression_loss
 elif target_type == 'classification':
-  criterion = nn.BCEWithLogitsLoss(reduction='sum')
+  criterion = nn.BCEWithLogitsLoss(reduction='mean')
 else:
   # criterion = nn.BCEWithLogitsLoss(reduction='sum')
   criterion = criterion_margin_focal_binary_cross_entropy
@@ -218,8 +218,12 @@ class LightningDR(pl.LightningModule):
     if distributed_backend:
       outputs = self.epoch_end_output
     avg_loss = torch.Tensor([out[f'{mode}_loss'].mean() for out in outputs]).mean()
-    probs = torch.cat([torch.tensor(out['probs']).view(-1, 1) for out in outputs], dim=0)
-    gt = torch.cat([torch.tensor(out['gt']).view(-1, 1) for out in outputs], dim=0)
+    if self.target_type == 'regression':
+      probs = torch.cat([torch.tensor(out['probs']).view(-1, 1) for out in outputs], dim=0)
+      gt = torch.cat([torch.tensor(out['gt']).view(-1, 1) for out in outputs], dim=0)
+    if self.target_type == 'classification':
+      probs = torch.cat([torch.tensor(out['probs']).view(-1, 5) for out in outputs], dim=0)
+      gt = torch.cat([torch.tensor(out['gt']).view(-1, 5) for out in outputs], dim=0)
     raw_pr, pr, la = self.label_processor(torch.squeeze(probs), torch.squeeze(gt))
     kappa = torch.tensor(cohen_kappa_score(pr, la, weights='quadratic'))
     r2 = r2_score(la, raw_pr)

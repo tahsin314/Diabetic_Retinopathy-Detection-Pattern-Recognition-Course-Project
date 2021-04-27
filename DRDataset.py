@@ -55,8 +55,8 @@ class DRDataset(Dataset):
     def __len__(self):
         return len(self.image_ids)
     
-    def onehot(self, target):
-        vec = torch.zeros(self.dim, dtype=torch.float32)
+    def onehot(self, num_class, target):
+        vec = torch.zeros(num_class, dtype=torch.float32)
         vec[target.astype('int')] = 1.
         return vec
     
